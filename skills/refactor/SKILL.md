@@ -1,0 +1,65 @@
+---
+name: refactor
+description: >-
+  Start a TDD refactoring workflow with parallel analysis, test-first approach,
+  and module migration. Use when the user wants to refactor, restructure,
+  extract, or reorganize existing code.
+argument-hint: <target>
+---
+
+# Refactor: $ARGUMENTS
+
+TDD refactoring workflow with parallel agents. Each phase must complete before the next.
+
+## Context (pre-computed)
+
+- Branch: !`git branch --show-current`
+
+## Setup
+
+1. If branch starts with `worktree-`, use it as-is. Otherwise, create a branch: `git checkout -b refactor/$ARGUMENTS`
+2. Create tasks for tracking — one per phase.
+
+## Parallelism Overview
+
+```
+Phase 1: ANALYZE ──┬── dependency-mapper ──┐
+                   ├── caller-finder ──────┼── merge → plan
+                   ├── test-scanner ───────┤
+                   └── impact-assessor ────┘
+
+Phase 2: TEST ─────┬── layer-a tests ──────┐
+                   ├── layer-b tests ──────┼── all RED
+                   └── layer-c tests ──────┘
+
+Phase 3: REFACTOR ─── sequential (dependencies)
+
+Phase 4: MIGRATE ──┬── module-a migrator ──┐
+                   ├── module-b migrator ──┼── merge
+                   └── module-c migrator ──┘
+
+Phase 5: REVIEW ───── slice-reviewer (subagent)
+
+Phase 6: VERIFY ───── integration-reviewer
+```
+
+## Phases
+
+| # | Phase | Parallel? | Details |
+|---|-------|-----------|---------|
+| 1 | ANALYZE | Always (4 agents) | Read [phases/01-analyze.md](phases/01-analyze.md) |
+| 2 | TEST | If multi-layer | Read [phases/02-test.md](phases/02-test.md) |
+| 3 | REFACTOR | Never | Read [phases/03-refactor.md](phases/03-refactor.md) |
+| 4 | MIGRATE | If multi-module | Read [phases/04-migrate.md](phases/04-migrate.md) |
+| 5 | REVIEW | Never | Read [phases/05-review.md](phases/05-review.md) |
+| 6 | VERIFY | Never | Read [phases/06-verify.md](phases/06-verify.md) |
+
+When entering a phase, read its detail file for full instructions.
+
+## Rules
+
+1. **Never skip phases** — each must complete before the next
+2. **Parallel where safe** — launch independent agents in a single message
+3. **Merge parallel results** — combine outputs before proceeding
+4. **Track progress** — update tasks on phase entry and completion
+5. **No backward compatibility** — delete old code, old exports, old types. No re-exports, no `_deprecated` prefixes, no `// removed` comments, no shims. Update ALL callers in the MIGRATE phase instead
