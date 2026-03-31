@@ -3,7 +3,7 @@ name: ship
 description: Validate, commit, push, and create PR for current work
 disable-model-invocation: true
 argument-hint: "[PR title]"
-allowed-tools: Bash(git *), Bash(gh *), Bash(npm run test*), Bash(pnpm test*), Bash(pnpm run test*)
+allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *)
 ---
 
 # Ship
@@ -19,8 +19,11 @@ allowed-tools: Bash(git *), Bash(gh *), Bash(npm run test*), Bash(pnpm test*), B
 
 Based on the context above:
 
-1. If all tests are not already known to pass, run tests. If they fail, STOP.
-2. If there are no changes to commit, STOP.
+1. If there are no changes to commit, STOP.
+2. Run quality checks (skip any that don't exist in this project):
+   - `pnpm lint` — if it fails, STOP.
+   - `pnpm typecheck` — if it fails, STOP.
+   - `pnpm test` — if it fails, STOP.
 
 ## Ship (do everything below in a SINGLE message)
 
