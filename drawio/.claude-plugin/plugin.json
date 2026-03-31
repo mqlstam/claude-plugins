@@ -1,0 +1,8 @@
+{
+  "name": "drawio",
+  "version": "1.0.0",
+  "description": "Generate draw.io diagrams as native .drawio files with optional PNG/SVG/PDF export",
+  "author": {
+    "name": "Miquel Stam"
+  }
+}

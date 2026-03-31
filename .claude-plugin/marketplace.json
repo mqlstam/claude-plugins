@@ -1,13 +1,18 @@
 {
-  "name": "claude-tdd-workflow",
+  "name": "mqlstam-plugins",
   "owner": {
     "name": "Miquel Stam"
   },
   "plugins": [
     {
       "name": "claude-tdd-workflow",
-      "source": ".",
+      "source": "./tdd-workflow",
       "description": "TDD workflow with parallel builders, vertical slice methodology, and quality gates"
+    },
+    {
+      "name": "drawio",
+      "source": "./drawio",
+      "description": "Generate draw.io diagrams as native .drawio files with optional PNG/SVG/PDF export"
     }
   ]
 }
