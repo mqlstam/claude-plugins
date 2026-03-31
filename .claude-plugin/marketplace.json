@@ -1,0 +1,13 @@
+{
+  "name": "claude-tdd-workflow",
+  "owner": {
+    "name": "Miquel Stam"
+  },
+  "plugins": [
+    {
+      "name": "claude-tdd-workflow",
+      "source": ".",
+      "description": "TDD workflow with parallel builders, vertical slice methodology, and quality gates"
+    }
+  ]
+}
