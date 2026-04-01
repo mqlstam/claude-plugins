@@ -1,6 +1,6 @@
 {
   "name": "claude-tdd-workflow",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "TDD workflow with parallel builders, vertical slice methodology, and quality gates",
   "author": {
     "name": "Miquel Stam"
