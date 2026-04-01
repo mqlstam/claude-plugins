@@ -25,6 +25,11 @@ TDD feature workflow with parallel builders. Each phase must complete before the
    - [ ] Hooks (frontend queries)
    - [ ] Components (UI)
 3. Create tasks for tracking — one per phase, only for in-scope work.
+4. **Fetch library docs** before any building:
+   a. Check if the project CLAUDE.md has a `Library Docs` table (with `llms.txt` URLs or MCP server names). If it does, use it as the source of truth for docs URLs.
+   b. If no docs table exists, scan `package.json` for major dependencies and look up their `llms.txt` at `https://<library-domain>/llms.txt`.
+   c. Fetch the `llms.txt` index for each library relevant to the in-scope layers (use MCP servers when available — they take priority over fetching).
+   d. Deduplicate — fetch each library once. Skip libraries already fetched in this conversation.
 
 ## Phases
 
