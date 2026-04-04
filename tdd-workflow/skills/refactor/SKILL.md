@@ -11,15 +11,10 @@ argument-hint: <target>
 
 TDD refactoring workflow with parallel agents. Each phase must complete before the next.
 
-## Context (pre-computed)
-
-- Branch: !`git branch --show-current`
-
 ## Setup
 
-1. If branch starts with `worktree-`, use it as-is. Otherwise, create a branch: `git checkout -b refactor/$ARGUMENTS`
-2. Create tasks for tracking — one per phase.
-3. **Fetch library docs** for libraries used by the refactor target:
+1. Create tasks for tracking — one per phase.
+2. **Fetch library docs** for libraries used by the refactor target:
    a. Scan imports in the target files to determine which libraries are involved.
    b. Check if the project CLAUDE.md has a `Library Docs` table (with `llms.txt` URLs or MCP server names). If it does, use it as the source of truth for docs URLs.
    c. If no docs table exists, look up `llms.txt` at `https://<library-domain>/llms.txt` for each detected library.

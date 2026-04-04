@@ -11,21 +11,11 @@ argument-hint: <feature-name>
 
 TDD feature workflow with parallel builders. Each phase must complete before the next.
 
-## Context (pre-computed)
-
-- Branch: !`git branch --show-current`
-
 ## Setup
 
-1. If branch starts with `worktree-`, use it as-is. Otherwise, create a feature branch: `git checkout -b feat/$ARGUMENTS`
-2. Ask the user which layers are in scope:
-   - [ ] Schema (database changes)
-   - [ ] Services (backend logic)
-   - [ ] Routes (API endpoints)
-   - [ ] Hooks (frontend queries)
-   - [ ] Components (UI)
-3. Create tasks for tracking — one per phase, only for in-scope work.
-4. **Fetch library docs** before any building:
+1. Determine which layers are in scope by analyzing the feature requirements (schema, services, routes, hooks, components). Proceed with all relevant layers — do not ask for confirmation.
+2. Create tasks for tracking — one per phase, only for in-scope work.
+3. **Fetch library docs** before any building:
    a. Check if the project CLAUDE.md has a `Library Docs` table (with `llms.txt` URLs or MCP server names). If it does, use it as the source of truth for docs URLs.
    b. If no docs table exists, scan `package.json` for major dependencies and look up their `llms.txt` at `https://<library-domain>/llms.txt`.
    c. Fetch the `llms.txt` index for each library relevant to the in-scope layers (use MCP servers when available — they take priority over fetching).
