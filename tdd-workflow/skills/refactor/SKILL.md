@@ -14,12 +14,12 @@ TDD refactoring workflow with parallel agents. Each phase must complete before t
 ## Setup
 
 1. Create tasks for tracking — one per phase.
-2. **Fetch library docs** for libraries used by the refactor target:
+2. **Verify library patterns** for libraries used by the refactor target:
    a. Scan imports in the target files to determine which libraries are involved.
-   b. Check if the project CLAUDE.md has a `Library Docs` table (with `llms.txt` URLs or MCP server names). If it does, use it as the source of truth for docs URLs.
-   c. If no docs table exists, look up `llms.txt` at `https://<library-domain>/llms.txt` for each detected library.
-   d. Fetch the `llms.txt` index then relevant pages (use MCP servers when available — they take priority over fetching).
-   e. Skip libraries already fetched in this conversation.
+   b. Check the project CLAUDE.md for a `Library Docs` table with lookup methods per library.
+   c. If no table exists, search the web for each library's `llms.txt` (e.g., `https://<library-domain>/llms.txt`).
+   d. For each library, use the specified method to search for the specific pattern/concept being refactored.
+   e. This is critical for refactors: the existing code may use an outdated pattern. Check the docs to confirm the replacement pattern is current.
 
 ## Parallelism Overview
 
