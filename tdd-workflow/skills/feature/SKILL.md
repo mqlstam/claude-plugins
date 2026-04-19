@@ -13,6 +13,8 @@ TDD feature workflow with parallel builders. Each phase must complete before the
 
 ## Setup
 
+**Workspace:** Stay on the current branch — never `git checkout`, `git switch`, `git checkout -b`, `git stash`, or create branches. The user picks the workspace (worktree, feature branch, or main) at session start; the skill must respect that choice. If the user wants isolation, they spawn with `--worktree` or pass `isolation: "worktree"` on parallel sub-agent invocations.
+
 1. Determine which layers are in scope by analyzing the feature requirements (schema, services, routes, hooks, components). Proceed with all relevant layers — do not ask for confirmation.
 2. Create tasks for tracking — one per phase, only for in-scope work.
 3. **Verify library patterns** before any building:

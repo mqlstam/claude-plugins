@@ -13,6 +13,8 @@ TDD refactoring workflow with parallel agents. Each phase must complete before t
 
 ## Setup
 
+**Workspace:** Stay on the current branch — never `git checkout`, `git switch`, `git checkout -b`, `git stash`, or create branches. The user picks the workspace (worktree, feature branch, or main) at session start; the skill must respect that choice. If the user wants isolation, they spawn with `--worktree` or pass `isolation: "worktree"` on parallel sub-agent invocations.
+
 1. Create tasks for tracking — one per phase.
 2. **Verify library patterns** for libraries used by the refactor target:
    a. Scan imports in the target files to determine which libraries are involved.
