@@ -25,6 +25,9 @@ Based on the context above:
    - `pnpm typecheck` — if it fails, STOP.
    - `pnpm test` — if it fails, STOP.
 
+These local checks are the primary safety net when remote CI workflows
+are disabled. Treat any failure as blocking — the goal is to ship green.
+
 ## Ship (do everything below in a SINGLE message)
 
 1. Stage all relevant changed files
@@ -37,9 +40,18 @@ Based on the context above:
    ```bash
    gh pr create --title "<title>" --body "..."
    ```
-5. Enable auto-merge (squash-merges when CI passes, deletes branch):
+5. Enable auto-merge if branch-protection allows it; fall back to admin
+   merge when branch protection is unconfigured (no required checks =
+   `gh pr merge --auto` errors with "Branch does not require checks").
+   Try in this order, stopping at the first that succeeds:
    ```bash
-   gh pr merge --squash --auto --delete-branch
+   # Preferred: auto-merge waits for required checks, then squash-merges.
+   gh pr merge --squash --auto --delete-branch \
+     || gh pr merge --squash --admin --delete-branch \
+     || echo "Manual merge required — see gh pr view"
    ```
+   `--admin` bypasses required status checks (needs admin rights on the
+   repo). Use it when (a) branch protection is unconfigured, or (b) the
+   relevant CI workflows are disabled and you trust local validation.
 
 Do all of the above in a single response. Do not send any other text besides the tool calls.
