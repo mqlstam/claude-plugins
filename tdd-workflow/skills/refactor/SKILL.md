@@ -41,9 +41,12 @@ Phase 4: MIGRATE ──┬── module-a migrator ──┐
                    ├── module-b migrator ──┼── merge
                    └── module-c migrator ──┘
 
-Phase 5: REVIEW ───── slice-reviewer (subagent)
-
-Phase 6: VERIFY ───── integration-reviewer
+Phase 5: VERIFY ───┬── code-quality-reviewer ─┐
+                   ├── invariant-runner ──────┤
+                   ├── jit-e2e-author ────────┼── aggregate → verdict
+                   ├── rehydration-checker ───┤
+                   ├── temporal-checker ──────┤
+                   └── dead-code-finder ──────┘
 ```
 
 ## Phases
@@ -54,8 +57,7 @@ Phase 6: VERIFY ───── integration-reviewer
 | 2 | TEST | If multi-layer | Read [phases/02-test.md](phases/02-test.md) |
 | 3 | REFACTOR | Never | Read [phases/03-refactor.md](phases/03-refactor.md) |
 | 4 | MIGRATE | If multi-module | Read [phases/04-migrate.md](phases/04-migrate.md) |
-| 5 | REVIEW | Never | Read [phases/05-review.md](phases/05-review.md) |
-| 6 | VERIFY | Never | Read [phases/06-verify.md](phases/06-verify.md) |
+| 5 | VERIFY | Always (6 specialists) | Read [phases/05-verify.md](phases/05-verify.md) |
 
 When entering a phase, read its detail file for full instructions.
 

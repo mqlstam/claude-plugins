@@ -30,8 +30,7 @@ TDD feature workflow with parallel builders. Each phase must complete before the
 | 1 | SPEC | Define types, API contract, task cards | Read [phases/01-spec.md](phases/01-spec.md) |
 | 2 | BUILD | Parallel TDD builders per layer | Read [phases/02-build.md](phases/02-build.md) |
 | 3 | WIRE | Connect layers, add routing | Read [phases/03-wire.md](phases/03-wire.md) |
-| 4 | REVIEW | Subagent code review + fixes | Read [phases/04-review.md](phases/04-review.md) |
-| 5 | INTEGRATION | Final validation, all tests, browser check | Read [phases/05-integration.md](phases/05-integration.md) |
+| 4 | VERIFY | Parallel fan-out: 5 specialists check the diff | Read [phases/04-verify.md](phases/04-verify.md) |
 
 When entering a phase, read its detail file for full instructions.
 
