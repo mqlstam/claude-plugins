@@ -21,6 +21,8 @@ Launch ALL FIVE in a single message. No `isolation: "worktree"` flag. They share
 
 3 of 5 are scope-gated and will no-op on most slices, keeping steady-state cost low (~$0.30-1.00 per VERIFY run depending on diff size).
 
+Cross-slice invariants are enforced deterministically via the consuming repo's `pnpm check:*` scripts and `tooling/eslint-plugin-*` rules; the `invariant-runner` specialist runs whichever exist. Repos that need the pattern can copy `.claude/contracts.md` from a reference project (Endoxia's is the canonical example).
+
 ## Steps
 
 1. Confirm dev server is reachable on `E2E_BASE_URL` (default `http://localhost:3000`) — required for `jit-e2e-author`. If down, ask the user to start it (`pnpm dev:up` or equivalent) before continuing.

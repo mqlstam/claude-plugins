@@ -20,6 +20,8 @@ Launch ALL SIX in a single message. No `isolation: "worktree"` flag. They share 
 | `temporal-checker` | haiku | diff touches Temporal workflow files | non-temporal slices |
 | `dead-code-finder` | sonnet | refactor renamed/moved/deleted symbols (almost always) | trivial rename with all callers cleanly updated |
 
+Cross-slice invariants are enforced deterministically via the consuming repo's `pnpm check:*` scripts and `tooling/eslint-plugin-*` rules; the `invariant-runner` specialist runs whichever exist. Repos that need the pattern can copy `.claude/contracts.md` from a reference project (Endoxia's is the canonical example).
+
 ## Steps
 
 1. Confirm dev server is reachable on `E2E_BASE_URL` (default `http://localhost:3000`) — required for `jit-e2e-author`. If down, ask the user to start it before continuing.
