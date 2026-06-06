@@ -13,6 +13,11 @@
       "name": "drawio",
       "source": "./drawio",
       "description": "Generate draw.io diagrams as native .drawio files with optional PNG/SVG/PDF export"
+    },
+    {
+      "name": "notule",
+      "source": "./notule",
+      "description": "Transcribe a meeting recording locally and turn it into a Dutch notule (PDF + DOCX + emailable audio) in a dedicated folder"
     }
   ]
 }

@@ -1,0 +1,8 @@
+{
+  "name": "notule",
+  "version": "1.0.0",
+  "description": "Transcribe a meeting recording locally (Whisper/MLX) and turn it into a Dutch notule as PDF + DOCX with a compressed, emailable audio file, in a dedicated folder",
+  "author": {
+    "name": "Miquel Stam"
+  }
+}
