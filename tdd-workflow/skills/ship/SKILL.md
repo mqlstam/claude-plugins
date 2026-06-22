@@ -75,18 +75,30 @@ on this exact diff.
    ```bash
    gh pr create --title "<title>" --body "..."
    ```
-5. Enable auto-merge if branch-protection allows it; fall back to admin
-   merge when branch protection is unconfigured (no required checks =
-   `gh pr merge --auto` errors with "Branch does not require checks").
-   Try in this order, stopping at the first that succeeds:
+5. Squash-merge. **Inspect the branch-protection state first — do not blind-guess
+   `--auto || --admin`** (that silently force-merges when a required check is
+   stalled/absent). Pick deterministically:
    ```bash
-   # Preferred: auto-merge waits for required checks, then squash-merges.
-   gh pr merge --squash --auto --delete-branch \
-     || gh pr merge --squash --admin --delete-branch \
-     || echo "Manual merge required — see gh pr view"
+   PR=$(gh pr view --json number -q .number)
+   required=$(gh api repos/:owner/:repo/branches/main/protection/required_status_checks \
+     --jq '.contexts | length' 2>/dev/null || echo 0)
+   if [ "$required" = 0 ]; then
+     # No required check (this repo, pre-beta) → clean squash, no --admin needed.
+     gh pr merge "$PR" --squash --delete-branch
+   else
+     cs=$(gh pr checks "$PR" --json name,state -q '.[]|select(.name=="check")|.state' 2>/dev/null)
+     case "$cs" in
+       SUCCESS) gh pr merge "$PR" --squash --delete-branch ;;
+       *) echo "BLOCKED: required 'check' is $cs. Local /ship already validated; to force, re-run with FORCE_ADMIN=1."
+          [ "${FORCE_ADMIN:-0}" = 1 ] && gh pr merge "$PR" --squash --admin --delete-branch || exit 2 ;;
+     esac
+   fi
    ```
-   `--admin` bypasses required status checks (needs admin rights on the
-   repo). Use it when (a) branch protection is unconfigured, or (b) the
-   relevant CI workflows are disabled and you trust local validation.
+   `--admin` only ever fires behind an explicit `FORCE_ADMIN=1` — never silently.
+
+**Merging does NOT deploy to production.** Deploy is decoupled: it fires only on a
+`deploy-*` tag (or manual dispatch), not on a push to `main`. `/ship` lands your
+work on `main`; nothing reaches prod until you explicitly run **`/deploy`**. This
+is intentional — merge freely, ship to prod deliberately.
 
 Do all of the above in a single response. Do not send any other text besides the tool calls.

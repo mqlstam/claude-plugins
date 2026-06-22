@@ -54,9 +54,12 @@ def main():
                 "Commands:\n"
                 "  /feature <name>    - New feature with TDD\n"
                 "  /refactor <name>   - Refactor with TDD\n"
-                "  /ship              - Commit, push, create PR\n"
-                "  /quickship         - Push directly to main\n"
-                "  /merge             - Squash-merge PR into main\n"
+                "  /ship              - Commit, push, PR, merge (does NOT deploy)\n"
+                "  /quickship         - Push directly to main (does NOT deploy)\n"
+                "  /merge             - Squash-merge PR into main (does NOT deploy)\n"
+                "  /deploy            - Ship main to prod via a deploy-* tag (the ONLY thing that deploys)\n"
+                "  /spinup            - Bring up this worktree's private runnable stack\n"
+                "  /teardown          - Tear down this worktree's stack (surgical)\n"
                 "  /validate          - Check slice completeness"
             )
         }

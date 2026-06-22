@@ -43,15 +43,24 @@ instructions.
      --jq '.workflows[] | "\(.state)  \(.name)"'
    ```
 
-4. **Squash merge** (try in order, stop at first success)
+4. **Squash merge — inspect state, don't blind-guess `--admin`.**
    ```bash
-   gh pr merge <number> --squash --delete-branch \
-     || gh pr merge <number> --squash --admin --delete-branch
+   required=$(gh api repos/:owner/:repo/branches/main/protection/required_status_checks \
+     --jq '.contexts | length' 2>/dev/null || echo 0)
+   if [ "$required" = 0 ]; then
+     gh pr merge <number> --squash --delete-branch     # no required check → clean
+   else
+     cs=$(gh pr checks <number> --json name,state -q '.[]|select(.name=="check")|.state' 2>/dev/null)
+     [ "$cs" = SUCCESS ] && gh pr merge <number> --squash --delete-branch \
+       || { echo "BLOCKED: 'check' is $cs — force only via FORCE_ADMIN=1"; \
+            [ "${FORCE_ADMIN:-0}" = 1 ] && gh pr merge <number> --squash --admin --delete-branch || exit 2; }
+   fi
    ```
-   `--admin` bypasses required-check failures and branch-protection
-   rules. Use when (a) branch protection has no required checks, (b)
-   required checks are stale results from a disabled workflow, or
-   (c) the user explicitly asked to force-merge.
+   `--admin` only fires behind an explicit `FORCE_ADMIN=1` — never silently.
+
+   **Merging does NOT deploy.** Deploy fires only on a `deploy-*` tag (or manual
+   dispatch), never on a push to `main`. This brings work onto `main`; run
+   **`/deploy`** when you want it on production.
 
 5. **Verify**
    ```bash
