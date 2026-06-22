@@ -40,9 +40,11 @@ Based on the context above:
    STOP if either check fails. Do not proceed without a fresh verify-state.
 
 3. **Quality checks** (skip any that don't exist in the project's package.json):
-   - `pnpm lint` — STOP on failure
-   - `pnpm typecheck` — STOP on failure
-   - `pnpm test --changed origin/main` if supported, else `pnpm test` — STOP on failure
+   - **Fast inner loop — run only what the diff affects.** If the repo uses
+     Turborepo (turbo 2.1+): `pnpm exec turbo run lint typecheck test --affected`
+     (lint/typecheck/test for changed packages + their dependents). STOP on failure.
+   - Otherwise: `pnpm lint`, `pnpm typecheck`, and `pnpm test --changed origin/main`
+     (if supported, else `pnpm test`) — STOP on any failure.
    - `pnpm format:check` if defined — STOP on failure
 
 4. **Project invariants** — discover and run every `pnpm check:*` and `pnpm env:*`
