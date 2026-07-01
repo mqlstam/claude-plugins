@@ -40,11 +40,27 @@ Based on the context above:
    STOP if either check fails. Do not proceed without a fresh verify-state.
 
 3. **Quality checks** (skip any that don't exist in the project's package.json):
-   - **Fast inner loop — run only what the diff affects.** If the repo uses
-     Turborepo (turbo 2.1+): `pnpm exec turbo run lint typecheck test --affected`
-     (lint/typecheck/test for changed packages + their dependents). STOP on failure.
-   - Otherwise: `pnpm lint`, `pnpm typecheck`, and `pnpm test --changed origin/main`
-     (if supported, else `pnpm test`) — STOP on any failure.
+   - **Anchor the affected set to `origin/main`, and include `build`.** The remote
+     deploy validates against `origin/main` over a full checkout and runs the
+     production build. A local `--affected` computed against a stale/diverged local
+     `main` — or one that omits `build` — tests a NARROWER set than what actually
+     lands, so local-green ≠ deploy-green (the #1 cause of a `/ship`-green commit
+     failing at deploy). Fetch first, pin the base, and add `build`:
+     ```bash
+     git fetch --quiet origin main 2>/dev/null || true
+     TURBO_SCM_BASE=origin/main pnpm exec turbo run lint typecheck test build --affected
+     ```
+     `TURBO_SCM_BASE=origin/main` makes the affected set match "what will land on
+     main" — turbo's default `--affected` base is the local `main` ref, which
+     drifts (see turbo docs: a too-shallow/absent base makes turbo treat ALL
+     packages as changed, the same failure the remote hit on a shallow tag
+     checkout). Adding `build` runs the production build (e.g. `next build`) so
+     build-only type errors and client→server import breaks — which pass
+     `typecheck` + `test` — fail HERE, locally and free, not in a billed remote
+     image build. STOP on failure.
+   - Non-Turborepo repos: `pnpm lint`, `pnpm typecheck`, `pnpm build`, and
+     `pnpm test --changed origin/main` (if supported, else `pnpm test`) — STOP on
+     any failure.
    - `pnpm format:check` if defined — STOP on failure
 
 4. **Project invariants** — discover and run every `pnpm check:*` and `pnpm env:*`
