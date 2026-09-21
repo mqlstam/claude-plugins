@@ -7,9 +7,10 @@ argument-hint: "[PR number or branch name]"
 
 # Merge
 
-Squash-merge an existing PR into main. Local-branch and worktree cleanup
-is handled by Claude Code's exit prompt — do not print manual cleanup
-instructions.
+Squash-merge an existing PR into main. Do not print manual cleanup
+instructions here: `/ship` owns post-merge cleanup (it deletes this worktree's
+build output and PRINTS — never runs — the worktree/branch removal commands),
+and Claude Code's exit prompt covers the rest.
 
 ## Process
 

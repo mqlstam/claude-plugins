@@ -18,6 +18,11 @@
       "name": "notule",
       "source": "./notule",
       "description": "Transcribe a meeting recording locally and turn it into a Dutch notule (PDF + DOCX + emailable audio) in a dedicated folder"
+    },
+    {
+      "name": "endoxia-film",
+      "source": "./endoxia-film",
+      "description": "Build short product films in Remotion in the Endoxia house style, reconstructed from real app screenshots and delivered in every social format from one component"
     }
   ]
 }

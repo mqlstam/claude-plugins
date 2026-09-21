@@ -54,10 +54,43 @@ for _ in $(seq 1 20); do
   [ -n "$RID" ] && break; sleep 3
 done
 [ -n "$RID" ] || { echo "Deploy run for ${SHA:0:8} not registered yet — check 'gh run list --workflow=deploy.yml'."; exit 1; }
-gh run watch "$RID" --exit-status \
-  && echo "LIVE: https://app.endoxia.com  (deployed ${SHA:0:8})" \
-  || echo "DEPLOY FAILED — prod stale. A Docker Hub token 404 / transient pull error is retryable: 'gh run rerun $RID --failed'."
+# Watch for the live display only. `gh run watch --exit-status` is NOT a
+# trustworthy verdict: on 2026-09-21 it exited 0 for run 35550388776 whose
+# conclusion was `failure`, so a deploy that never rolled would have been
+# reported as LIVE while prod sat on the previous release. Read the verdict
+# from the API instead, and never branch on the watch's exit code.
+gh run watch "$RID" || true
+
+# The watch can also return before the run is terminal, so settle on `status`
+# before reading `conclusion` — an in-flight run has conclusion "".
+concl=unknown
+for _ in $(seq 1 60); do
+  st=$(gh run view "$RID" --json status -q .status 2>/dev/null || echo unknown)
+  if [ "$st" = completed ]; then
+    concl=$(gh run view "$RID" --json conclusion -q .conclusion 2>/dev/null || echo unknown)
+    break
+  fi
+  sleep 10
+done
+
+if [ "$concl" = success ]; then
+  echo "LIVE: https://app.endoxia.com  (deployed ${SHA:0:8})"
+else
+  echo "DEPLOY ${concl} — prod is STALE, still on the previous release."
+  echo "  Why:    gh run view $RID --log-failed"
+  echo "  Retry:  gh run rerun $RID --failed   (transient registry/token errors only)"
+  exit 1
+fi
 ```
+
+**Report the `conclusion`, never the watch's exit code.** If you summarise this
+deploy to the user, the sentence "it is live" may only follow `conclusion ==
+success` — confirmed by a second read, not inferred from a command that
+returned. The same caution applies to any `| tail` you add around a gate: a pipe
+discards the real exit status and reports the pipe's, which has produced three
+separate false greens in one session (`gh run watch`, `check:contracts` with a
+failed link, and a `turbo` lane with a failed task). Redirect to a file and echo
+`$?` instead.
 
 Do all of the above in a single response; tool calls only. The deploy builds +
 pushes images and SSHes to the prod box — it is the one place that changes

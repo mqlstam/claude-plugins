@@ -19,6 +19,14 @@ You only do real work if the diff touches:
 
 If the diff doesn't touch any of those, report `NO_OP — diff doesn't affect chat rehydration` and exit.
 
+**This guard is now DEFENCE IN DEPTH, not the primary gate.** The parent scopes the
+diff and only launches you when chat persistence or chat-visible rendering changed —
+measured, you returned `NO_OP` on **42%** of your launches, each one paying a full
+opus start-up to read a diff and conclude there was nothing to do. So a `NO_OP` from
+you now means the parent's path heuristic was wrong: say so in one line, so the
+heuristic can be fixed, and exit immediately. Do not go looking for adjacent work to
+justify the launch.
+
 ## Workflow
 
 1. **Scope the diff** — `git diff origin/main...HEAD --name-only`.

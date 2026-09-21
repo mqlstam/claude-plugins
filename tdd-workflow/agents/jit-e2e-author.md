@@ -72,14 +72,31 @@ test.describe('<feature>', () => {
 
 ## Pre-req checks before running
 
-- Dev server reachable on `E2E_BASE_URL` (default `http://localhost:3000`)
-- For `.auth.spec.ts`: seeded dev user exists (project's `db:seed:dev` or equivalent has run)
+The parent starts the stack BEFORE launching you and only launches you once it
+answers — that ordering exists because the recurring failure was you starting, working
+for ten minutes, and only then discovering there was no stack. So by the time you run,
+the stack should be up. Confirm it in one call, do not assume:
 
-If the dev server isn't up, report `BLOCKED — start dev server (pnpm dev:up or pnpm dev) and retry`. Do not start it yourself; the parent session may already be using port 3000.
+```bash
+curl -sf "${E2E_BASE_URL:-http://localhost:${WT_BFF_PORT:-3000}}" >/dev/null && echo up
+```
 
-## Cross-chat lock (when multiple chats verify in parallel)
+- Each worktree runs its OWN private stack, so there is no cross-chat runtime lock to
+  wait on any more (`.claude/verify-runtime.lock` is gone). Target `$WT_BFF_PORT`, not
+  a hardcoded 3000 — the port is leased per worktree.
+- For `.auth.spec.ts`: the seeded dev user must exist (`pnpm db:seed:dev` or equivalent).
 
-If `.claude/verify-runtime.lock` exists in the repo root, another chat is using the dev server. Wait up to 10 minutes (poll every 30s) for it to release. If it doesn't release, report `BLOCKED — runtime lock held by <path-from-lock-file>; retry after that chat finishes`. The lock file is created by the parent agent before invoking you, not by you.
+If it is NOT up, report `BLOCKED — stack not reachable on <url>` and stop. **Do not
+start it yourself**: the parent owns stack lifecycle (`scripts/wt.sh`,
+`scripts/worktree-stack-cap.sh`), it may already be starting one, and a second
+`compose up` from here can trip the machine's stack cap. A BLOCKED report is a
+verdict; a stack you started behind the parent's back is a leak.
+
+## Never sleep-poll
+
+`pnpm test:e2e` and any stack wait go through `run_in_background: true` when they
+might exceed ~8 minutes; wait for the completion notification. Polling loops were 46%
+of measured tool wall-clock.
 
 ## Report Format
 
@@ -89,7 +106,7 @@ JIT E2E REPORT
 
 Diff scope:        {USER_FACING | INTERNAL_ONLY}
 Spec written:      testing/e2e/specs/<file>.spec.ts
-Spec result:       PASS | FAIL | BLOCKED
+Spec result:       PASS | FAIL | BLOCKED | NOT_RUN
 Mutation result:   CATCHES_REGRESSION | DOES_NOT_CATCH | SKIPPED
 
 If FAIL or DOES_NOT_CATCH:
@@ -99,7 +116,12 @@ If FAIL or DOES_NOT_CATCH:
 If NO_OP:
   Reason: diff is not user-observable
 
-VERDICT: {READY | NEEDS_ATTENTION | NO_OP | BLOCKED}
+VERDICT: {READY | NEEDS_ATTENTION | NO_OP | BLOCKED | NOT_RUN}
+
+NO_OP  = the diff is not user-observable; there was nothing to test.
+BLOCKED / NOT_RUN = there WAS something to test and it did not happen. Say which.
+         Never report either as a pass — a verification that did not run is reported,
+         not absorbed.
 ```
 
 ## Rules
