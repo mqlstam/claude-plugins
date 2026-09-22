@@ -261,5 +261,7 @@ Steps 1-3 in a SINGLE message; then the PR; then the merge.
 
 **Merging does NOT deploy to production.** Deploy is decoupled: it fires only on a
 `deploy-*` tag (or manual dispatch), not on a push to `main`. `/ship` lands your work
-on `main`; nothing reaches prod until you explicitly run **`/deploy`**. This is
-intentional — merge freely, ship to prod deliberately.
+on `main`; nothing reaches a box until you explicitly run **`/deploy`**, and where a
+project has a staging step (Endoxia, slice 603) that tag reaches STAGING only —
+production is a separate **`/promote`**. This is intentional — merge freely, release
+deliberately.

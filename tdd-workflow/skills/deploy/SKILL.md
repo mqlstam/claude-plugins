@@ -1,6 +1,6 @@
 ---
 name: deploy
-description: Deploy current main to production by pushing a deploy-* tag. Deploy is decoupled from merge — merging never deploys; this is the only thing that ships to prod.
+description: Build current main and release it to staging by pushing a deploy-* tag. Merging never deploys; production is reached only by promoting what staging serves (/promote).
 disable-model-invocation: true
 argument-hint: ""
 allowed-tools: Bash(git *), Bash(gh *)
@@ -8,10 +8,12 @@ allowed-tools: Bash(git *), Bash(gh *)
 
 # Deploy
 
-Ships the current tip of `main` to production. **Deploy is intentional, not
-automatic:** the Deploy workflow triggers only on a `deploy-*` tag (or manual
-dispatch), never on a push to `main`. So `/ship` and `/merge` land work on `main`
-without touching prod — `/deploy` is the one command that ships it.
+Builds the current tip of `main` and releases it to STAGING. **Deploy is
+intentional, not automatic:** the Deploy workflow triggers only on a `deploy-*`
+tag (or manual dispatch), never on a push to `main`. Since Endoxia slice 603 a
+tag stops at staging (`https://staging.endoxia.ai`); production is a separate,
+manual promote of what staging serves (`/promote`, or `gh workflow run
+promote.yml -f sha=<sha>`), with no rebuild.
 
 ## Context (pre-computed)
 
@@ -74,9 +76,11 @@ for _ in $(seq 1 60); do
 done
 
 if [ "$concl" = success ]; then
-  echo "LIVE: https://app.endoxia.com  (deployed ${SHA:0:8})"
+  # Since Endoxia slice 603 a deploy-* tag releases to STAGING only; production
+  # is reached by promoting (/promote, or: gh workflow run promote.yml -f sha=...).
+  echo "STAGING: https://staging.endoxia.ai  (released ${SHA:0:8}; production unchanged, promote with /promote)"
 else
-  echo "DEPLOY ${concl} — prod is STALE, still on the previous release."
+  echo "DEPLOY ${concl}: staging still serves the previous release; production is untouched."
   echo "  Why:    gh run view $RID --log-failed"
   echo "  Retry:  gh run rerun $RID --failed   (transient registry/token errors only)"
   exit 1

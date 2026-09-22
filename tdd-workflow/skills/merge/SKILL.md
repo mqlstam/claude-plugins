@@ -61,7 +61,9 @@ and Claude Code's exit prompt covers the rest.
 
    **Merging does NOT deploy.** Deploy fires only on a `deploy-*` tag (or manual
    dispatch), never on a push to `main`. This brings work onto `main`; run
-   **`/deploy`** when you want it on production.
+   **`/deploy`** when you want it released. Where a project has a staging step
+   (Endoxia, slice 603) that tag reaches STAGING, and production is a separate
+   **`/promote`**.
 
 5. **Verify**
    ```bash

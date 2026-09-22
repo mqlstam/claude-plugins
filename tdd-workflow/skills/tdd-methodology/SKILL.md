@@ -90,7 +90,7 @@ Reach for it before reaching for another grep-shaped gate.
 | `/ship`                     | Gate (reusing what VERIFY proved), commit, push, PR, merge     |
 | `/quickship`                | Same gates, straight to main                                   |
 | `/merge`                    | Squash-merge an existing PR                                    |
-| `/deploy`                   | Ship main to prod via a `deploy-*` tag — the only thing that deploys |
+| `/deploy`                   | Release main via a `deploy-*` tag — the only thing that deploys (Endoxia: to STAGING; production is `/promote`) |
 | `/spinup` / `/teardown`     | This worktree's private runnable stack                         |
 | `/validate`                 | Check slice completeness                                       |
 
