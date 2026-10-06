@@ -46,11 +46,18 @@ class Transcript:
         self.n += 1
         return f"toolu_{self.n:04d}"
 
-    def typed(self, name, args=""):
+    def typed(self, name, args="", duplicated=False):
         content = f"<command-message>{name}</command-message>\n<command-name>/{name}</command-name>"
         if args:
             content += f"\n<command-args>{args}</command-args>"
-        self.lines.append({"type": "user", "message": {"role": "user", "content": content}})
+        parent = f"u{len(self.lines)}"
+        entry = {"type": "user", "parentUuid": parent, "uuid": f"u{len(self.lines) + 1}",
+                 "message": {"role": "user", "content": content}}
+        self.lines.append(entry)
+        if duplicated:
+            # What Claude Code wrote on 2026-10-06: the same prompt again, same
+            # parent, new uuid.
+            self.lines.append({**entry, "uuid": f"{entry['uuid']}-dup"})
         return self
 
     def prose(self, text):
@@ -246,6 +253,22 @@ class SkillArmTest(unittest.TestCase):
         t.skill("claude-tdd-workflow:ship")
         self.assertIsNotNone(skill_decision(t, "claude-tdd-workflow:ship"))
         self.assertIsNone(skill_decision(t, "claude-tdd-workflow:deploy"))
+
+    def test_a_prompt_written_twice_is_one_approval(self):
+        t = Transcript().typed("approve", "merge", duplicated=True)
+        t.skill("claude-tdd-workflow:merge")
+        self.assertIsNotNone(skill_decision(t, "claude-tdd-workflow:merge"),
+                             "one typed /approve must allow one run, however often it was written down")
+
+    def test_typing_it_twice_is_two_approvals(self):
+        t = Transcript().typed("approve", "merge").typed("approve", "merge")
+        t.skill("claude-tdd-workflow:merge")
+        self.assertIsNone(skill_decision(t, "claude-tdd-workflow:merge"))
+
+    def test_a_duplicated_typed_skill_grants_its_action_once(self):
+        t = Transcript().typed("claude-tdd-workflow:ship", duplicated=True)
+        t.bash("gh pr merge 12 --squash")
+        self.assertIsNotNone(bash_decision(t, "gh pr merge 13 --squash"))
 
     def test_refused_or_failed_invocation_does_not_use_the_approval(self):
         t = Transcript().typed("approve", "ship")

@@ -554,6 +554,11 @@ def build_ledger(transcript_path: str, current_tool_use_id: str | None,
     ledger = Ledger(resolver.actions)
     scope = scope or RepoScope.from_config(unknown_guarded=False)
     pending: dict[str, tuple] = {}
+    # Claude Code can write ONE typed command into the transcript twice: same
+    # content, same parentUuid, a new uuid (seen 2026-10-06 — one `/approve
+    # merge` counted as two approvals). Two entries at the same place in the
+    # conversation with the same text are one prompt.
+    seen_prompts: set[tuple] = set()
     try:
         fh = open(transcript_path, encoding="utf-8", errors="replace")
     except OSError:
@@ -579,6 +584,10 @@ def build_ledger(transcript_path: str, current_tool_use_id: str | None,
             if entry.get("type") == "user":
                 if isinstance(content, str):
                     if _is_human_prompt(entry):
+                        key = (entry.get("parentUuid"), content)
+                        if entry.get("parentUuid") is not None and key in seen_prompts:
+                            continue
+                        seen_prompts.add(key)
                         cmd = parse_typed_command(content)
                         if cmd:
                             ledger.typed(cmd[0], cmd[1], resolver.actions(cmd[0]))
