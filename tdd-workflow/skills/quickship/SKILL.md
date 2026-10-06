@@ -1,7 +1,7 @@
 ---
 name: quickship
-description: Validate and push directly to main without a PR. Same gates as /ship — only the merge mechanism differs.
-disable-model-invocation: true
+description: Validate and push directly to main without a PR. Same gates as /ship — only the merge mechanism differs. Runs when the user types /quickship, or after /approve quickship (one run).
+release-actions: push-main
 argument-hint: "[commit message]"
 allowed-tools: Bash(git *), Bash(npm *), Bash(pnpm *), Bash(node *), Bash(jq *)
 ---

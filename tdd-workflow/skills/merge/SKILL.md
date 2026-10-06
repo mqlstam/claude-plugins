@@ -1,7 +1,7 @@
 ---
 name: merge
-description: Squash-merge a PR into main
-disable-model-invocation: true
+description: Squash-merge a PR into main. Runs when the user types /merge, or after /approve merge (one run).
+release-actions: merge
 argument-hint: "[PR number or branch name]"
 ---
 

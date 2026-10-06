@@ -1,0 +1,4 @@
+{
+  "$comment": "Repositories whose release commands (merge, push to main, deploy tag, workflow dispatch) need a typed or /approve'd release skill. Owner decision 2026-10-05: Endoxia only; other repos keep merging freely. The release SKILLS need an approval for model invocation in every repo regardless. mqlstam/Endoxia is the pre-transfer name, which GitHub still redirects.",
+  "guardedRepos": ["EndoxiaBV/Endoxia", "mqlstam/Endoxia"]
+}

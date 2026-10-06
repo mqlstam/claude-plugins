@@ -1,7 +1,7 @@
 ---
 name: deploy
-description: Build current main and release it to staging by pushing a deploy-* tag. Merging never deploys; production is reached only by promoting what staging serves (/promote).
-disable-model-invocation: true
+description: Build current main and release it to staging by pushing a deploy-* tag. Merging never deploys; production is reached only by promoting what staging serves (/promote). Runs when the user types /deploy, or after /approve deploy (one run).
+release-actions: deploy-tag
 argument-hint: ""
 allowed-tools: Bash(git *), Bash(gh *)
 ---

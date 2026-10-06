@@ -1,7 +1,7 @@
 ---
 name: ship
-description: Validate, commit, push, and create PR for current work
-disable-model-invocation: true
+description: Validate, commit, push, and create PR for current work. Runs when the user types /ship, or when Claude invokes it after the user typed /approve ship (one run).
+release-actions: merge
 argument-hint: "[PR title]"
 allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node *), Bash(jq *)
 ---
@@ -238,26 +238,14 @@ Steps 1-3 in a SINGLE message; then the PR; then the merge.
    rm -rf packages/web/.next
    ```
 
-3. **PRINT the removal commands. Do not run them.** The session is running INSIDE
-   this worktree; removing it from here pulls the floor out. Print them only when the
-   branch is merged and the tree is clean, and let the user run them from another
-   terminal:
-
-   ```bash
-   branch=$(git branch --show-current)
-   wt=$(git rev-parse --show-toplevel)
-   if [ -z "$(git status --porcelain)" ] && git branch --merged origin/main | grep -qx "  $branch"; then
-     cat <<EOF
-
-   Merged and clean. To reclaim this worktree, from ANOTHER terminal:
-
-     git -C "$(git rev-parse --git-common-dir)/.." worktree remove "$wt"
-     git -C "$(git rev-parse --git-common-dir)/.." branch -d "$branch"
-
-   (The next session start also sweeps stacks whose worktree directory is gone.)
-   EOF
-   fi
-   ```
+3. **Do not remove the worktree, and do not tell the user to remove it from another
+   terminal.** Leaving is one step for the user: exit this session (Ctrl-C) and choose
+   "Remove worktree". The plugin's SessionEnd hook (`scripts/worktree-session-end.sh`)
+   then retires everything the worktree left outside its checkout — stack, volumes,
+   images, dev server, Chrome and its profile — via the repo's
+   `scripts/worktree-retire.sh`. A worktree that is kept instead is removed by the
+   session-start sweep once its work is on main, it is clean and it has been unused
+   for a week. Say this in one line when the merge is done.
 
 **Merging does NOT deploy to production.** Deploy is decoupled: it fires only on a
 `deploy-*` tag (or manual dispatch), not on a push to `main`. `/ship` lands your work
