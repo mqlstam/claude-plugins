@@ -73,14 +73,26 @@ There is no `.claude/verify-runtime.lock` any more: each worktree runs its own
 private stack, so the runtime lane no longer needs cross-chat serialization. The
 machine-wide `gate-lock` covers the only thing that still contends — the heavy gate.
 
-## Step 3 — launch, in ONE message
+## Step 3 — launch in two waves: the judges, then the gate
 
-All in-scope specialists in a single message. Each is single-shot; they cannot ask
-the user questions mid-run.
+**Wave 1, in ONE message:** every in-scope specialist except `invariant-runner`. Each
+is single-shot; they cannot ask the user questions mid-run. They read, judge, and may
+fix trivial issues in place.
 
-`invariant-runner` additionally **records what passed** against the content key, so
-`/ship` and `.husky/pre-push` can skip exactly those commands and nothing else. That
-is the whole reason a `/ship` after a green VERIFY is fast.
+**Wave 2, once wave 1 has returned and its fixes are in:** `invariant-runner`, once, on
+that final tree.
+
+Why the order (measured on two consecutive ships, 2026-10-07): launched together, the
+reviewer edited files while the gate was running both times. Every edit moved the
+tree hash, the gate's records stopped covering the tree, and the runner re-ran what
+the move invalidated: lint+typecheck and format both times, and once the whole
+check sweep. The gate is the only specialist whose output is keyed to the exact
+tree, so it runs on the tree the judges leave behind. A wave 1 that edits nothing
+costs a few minutes of waiting; a wave 1 that edits costs no re-run.
+
+`invariant-runner` **records what passed** against the content key, so `/ship` and
+`.husky/pre-push` can skip exactly those commands and nothing else. That is the whole
+reason a `/ship` after a green VERIFY is fast.
 
 **Do not `sleep`-poll while they work.** Specialists return on their own; a
 backgrounded gate notifies on completion. Polling was 46% of measured tool wall-clock.
@@ -106,9 +118,9 @@ the user. A verification that did not happen is reported, never absorbed.
 
 - **READY** → write `.claude/.verify-state.json` with the current `git rev-parse HEAD`
   and timestamp. Suggest `/ship`.
-- **NEEDS_FIX** → fix in this chat, then re-run **only** the failing specialist.
-  Note that a fix changes the tree, so every recorded gate green is discarded and
-  `/ship` will re-run those commands — which is correct.
+- **NEEDS_FIX** → fix in this chat, re-run **only** the failing judge, then run the
+  gate (wave 2) once more on the fixed tree. A fix changes the tree, so every recorded
+  gate green is discarded — which is correct.
 - **BLOCKED** → surface to the user. Do not ship.
 
 ## Completion

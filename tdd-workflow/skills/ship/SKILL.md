@@ -185,6 +185,15 @@ Steps 1-3 in a SINGLE message; then the PR; then the merge.
    Expect `pre-push` to print `reused from the gate that ran on this commit` for each
    of its sections. If it runs them instead, read its reason — something moved.
 
+   **Main moved since the gate?** Check `git rev-list --count HEAD..origin/main` before
+   pushing. If it is not 0, merge `origin/main` in (`git merge --no-edit origin/main`),
+   resolve, commit, then `promote` again. When main only carries what this branch
+   already contains (the squash of an earlier slice shipped from this same branch),
+   the tree hash is unchanged and every record carries over; otherwise `promote`
+   refuses and the gate re-runs on the merged tree, which is the point. A slice index
+   (`docs/slices/INDEX.md`) that both sides appended to is the usual conflict: keep
+   both lines.
+
 4. Create a PR:
    - If $ARGUMENTS provided, use as title
    - Otherwise, derive title from the commit message
@@ -212,6 +221,17 @@ Steps 1-3 in a SINGLE message; then the PR; then the merge.
    fi
    ```
    `--admin` only ever fires behind an explicit `FORCE_ADMIN=1` — never silently.
+
+   **Read the merge's verdict from the PR, not from the command's exit code.** From a
+   worktree, `gh pr merge --delete-branch` merges on GitHub and then fails locally with
+   `fatal: 'main' is already used by worktree at …`, because it tries to check out
+   `main` to delete the local branch (seen on both ships of 2026-10-07). So after the
+   merge command, whatever it printed:
+   ```bash
+   gh pr view "$PR" --json state,mergeCommit -q '.state + " " + (.mergeCommit.oid // "-")'
+   ```
+   `MERGED <sha>` is the verdict; anything else is a failed merge, and its output is
+   the reason. The remote branch is deleted on the merged path either way.
 
 ## After the merge — reclaim, then hand back
 

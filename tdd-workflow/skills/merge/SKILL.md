@@ -79,9 +79,10 @@ automatically. The remote branch is already gone via `--delete-branch`.
 Local branch / worktree pruning is the harness's responsibility, not
 the skill's.
 
-The destructive-git hook also blocks `git checkout main` /
-`git branch -d` from a worktree whose `main` is owned by a sibling tree,
-so attempting it would just produce noise.
+Git itself refuses `git checkout main` / `git branch -d` from a worktree
+whose `main` is checked out in a sibling tree (`fatal: 'main' is already
+used by worktree at …`; `gh pr merge --delete-branch` prints the same after
+a successful remote merge), so attempting it would just produce noise.
 
 ## Output
 

@@ -34,8 +34,8 @@ that fit under the 10-minute `Bash` ceiling, run the long one with
 Based on the context above:
 
 1. **Must be on main, in the primary worktree.** This skill commits directly to
-   main; switching branches from a worktree is blocked by most projects'
-   destructive-git hooks. If `Branch` ≠ `main` or `Worktree` ≠ `Primary worktree`,
+   main; a worktree session never switches branches, and git refuses to check out
+   `main` where another worktree holds it. If `Branch` ≠ `main` or `Worktree` ≠ `Primary worktree`,
    STOP with: "Use /ship from a feature branch or worktree; /quickship only runs
    from the main checkout."
 

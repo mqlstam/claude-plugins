@@ -18,12 +18,27 @@ argument-hint: <feature-name> [--layers]
    and acceptance criteria. The acceptance criteria are what the tests assert; without
    them you are guessing at the contract.
 2. Create tasks for tracking — one per phase.
-3. **Verify library patterns** before any building:
-   a. Check the project CLAUDE.md for a `Library Docs` table with lookup methods per library.
-   b. If no table exists, search the web for each library's `llms.txt`.
-   c. For each relevant library, look up the specific pattern you are about to implement.
-   d. This applies equally to **modifying existing code** — if the existing pattern
-      might be outdated, verify it against current docs before extending it.
+3. **Read the real docs before building**, for every library, SDK, provider API or tool
+   the slice touches:
+   a. Find the version this project runs (lockfile, Dockerfile pins, compose image tags).
+   b. Read its documentation for THAT version: the guides that explain the concept, show
+      worked examples and set out the options, not only type definitions (they confirm a
+      name; they do not say what a setting does or what leaving it out does). Look first
+      for docs shipped inside the installed package; otherwise the docs site, after
+      checking which version it documents. A site a major ahead means finding our
+      version's path, or the repository's docs at our version's tag.
+   c. Read pages as raw text: the `.md` twin, the source on GitHub, or
+      `curl -H 'Accept: text/markdown'`. WebFetch returns a summary, and a summary drops
+      the defaults and fallbacks that decide a design.
+   d. For a provider (an LLM host, an external API), read the SDK's page for it AND the
+      provider's own guide for the feature. What the provider actually does is settled
+      by a live probe, not by either page.
+   e. If the project has its own docs rule (e.g. `.claude/rules/library-docs.md`), follow
+      it: it names the traps of that stack.
+   f. Write in the SPEC, per technology: the version and the guides you read, and what
+      you chose differently because of them. This applies equally to **modifying
+      existing code**: the pattern you are about to extend may be one an older version
+      needed.
 
 ## Build shape — single agent by default
 

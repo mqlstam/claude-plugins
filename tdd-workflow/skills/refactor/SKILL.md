@@ -15,12 +15,20 @@ argument-hint: <target> [--layers]
 **Workspace:** Stay on the current branch — never `git checkout`, `git switch`, `git checkout -b`, `git stash`, or create branches. The user picks the workspace at session start; the skill must respect that choice.
 
 1. Create tasks for tracking — one per phase.
-2. **Verify library patterns** for libraries used by the refactor target:
-   a. Scan imports in the target files to determine which libraries are involved.
-   b. Check the project CLAUDE.md for a `Library Docs` table with lookup methods per library.
-   c. If no table exists, search the web for each library's `llms.txt`.
-   d. For each, look up the pattern being refactored. **This is critical for refactors**
-      — the existing code may use an outdated pattern, so confirm the replacement is current.
+2. **Read the real docs** for the libraries the refactor target uses:
+   a. Scan imports in the target files to determine which libraries are involved, and
+      find the version this project runs of each (lockfile, Dockerfile pins).
+   b. Read the documentation for THAT version: the guides that explain the concept, show
+      worked examples and set out the options, not only type definitions. Look first for
+      docs shipped inside the installed package; otherwise the docs site, after checking
+      which version it documents (a newer major means finding our version's path, or the
+      repository's docs at our tag).
+   c. Read pages as raw text (the `.md` twin, the source on GitHub,
+      `curl -H 'Accept: text/markdown'`); WebFetch returns a summary.
+   d. If the project has its own docs rule (e.g. `.claude/rules/library-docs.md`), follow it.
+   e. **This is critical for refactors**: the existing code may use a pattern an older
+      version needed, so confirm the replacement against the docs of the version we run.
+      Write in the plan, per library, the version and the guides you read.
 
 ## Build shape — single agent by default
 

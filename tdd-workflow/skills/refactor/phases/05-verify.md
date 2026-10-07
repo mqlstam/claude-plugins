@@ -52,7 +52,18 @@ min, and the recurring shape was starting it and only then discovering no stack)
 There is no `.claude/verify-runtime.lock` any more: each worktree runs its own private
 stack. The machine-wide `gate-lock` covers the only remaining contention — the heavy gate.
 
-## Step 3 — launch, in ONE message
+## Step 3 — launch in two waves: the judges, then the gate
+
+**Wave 1, in ONE message:** every in-scope specialist except `invariant-runner`
+(`code-quality-reviewer`, `dead-code-finder`, and whichever of the others the diff
+brings in). They may fix trivial issues in place.
+
+**Wave 2, once wave 1 has returned and its fixes are in:** `invariant-runner`, once, on
+that final tree. Launched together, a judge's edit moves the tree hash under a running
+gate and invalidates what it recorded; on two consecutive ships (2026-10-07) that cost
+a re-run each time. The gate is the only specialist keyed to the exact tree, so it runs
+last. After a NEEDS_FIX round: fix, re-run only the failing judge, then the gate once
+more.
 
 `invariant-runner` records what passed against the content key (commit SHA **plus** a
 tree hash covering uncommitted and untracked changes), which is what lets `/ship` and
