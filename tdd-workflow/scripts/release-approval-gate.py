@@ -377,11 +377,44 @@ def _segment(raw: str, start: int) -> str:
     return raw[start:start + (m.end() if m else 0)]
 
 
-def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = GUARD_ALL) -> set[str]:
+def _stops_at_pipe(masked: str, start: int) -> bool:
+    """Whether the simple command at `start` sends its output into a pipe (`|` or
+    `|&`). A redirect's `&` (`2>&1`, `&>file`) belongs to the command; `||` and `&&`
+    and `;` end it without a pipe. Read on the masked text, so a quoted `|` is not
+    one."""
+    i, n = start, len(masked)
+    while i < n:
+        c = masked[i]
+        if c in ";\n":
+            return False
+        if c == "|":
+            return masked[i + 1:i + 2] != "|"
+        if c == "&":
+            if masked[i + 1:i + 2] == "&":
+                return False
+            if i > start and masked[i - 1] in "<>":  # 2>&1, <&3
+                i += 1
+                continue
+            if masked[i + 1:i + 2] == ">":  # &>file
+                i += 2
+                continue
+            return False  # a background job ends the command
+        i += 1
+    return False
+
+
+def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = GUARD_ALL,
+             piped: set[str] | None = None) -> set[str]:
+    """The release action classes `cmd` performs. When `piped` is a set, the classes
+    whose own command sends its output into a pipe are added to it as well."""
     classes: set[str] = set()
     if not RELEASE_VERB_HINT.search(cmd):
         return classes
     masked = mask_inert(cmd)
+
+    def note_pipe(m, cls: str) -> None:
+        if piped is not None and _stops_at_pipe(masked, m.start()):
+            piped.add(cls)
 
     def gh_guarded(m) -> bool:
         flag = _REPO_FLAG.search(_segment(cmd, m.start()))
@@ -391,9 +424,11 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
     for m in _GH_PR_MERGE.finditer(masked):
         if gh_guarded(m):
             classes.add("merge")
+            note_pipe(m, "merge")
     for m in _GH_WORKFLOW_RUN.finditer(masked):
         if gh_guarded(m):
             classes.add("dispatch")
+            note_pipe(m, "dispatch")
     for m in _GH_API.finditer(masked):
         args = cmd[m.start(1):m.end(1)]
         api_slug = re.search(r"repos/([^/\s]+/[^/\s]+)/", args)
@@ -405,8 +440,10 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
             continue
         if re.search(r"pulls/[^/\s]+/merge\b|/merges\b", args):
             classes.add("merge")
+            note_pipe(m, "merge")
         if "dispatches" in args:
             classes.add("dispatch")
+            note_pipe(m, "dispatch")
 
     for m in _GIT_PUSH.finditer(masked):
         git_opts = _tokens(cmd[m.start(1):m.end(1)])
@@ -431,27 +468,31 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
                 continue
             positional.append(tok)
         refspecs = positional[1:]
+        mine: set[str] = set()  # what THIS push does
 
         if flags & {"--tags", "--follow-tags"} or any(
             "deploy-" in r or "refs/tags/" in r for r in refspecs
         ):
-            classes.add("deploy-tag")
+            mine.add("deploy-tag")
         elif any("$" in r for r in refspecs) and _DEPLOY_TAG_ASSIGN.search(cmd):
-            classes.add("deploy-tag")
+            mine.add("deploy-tag")
 
         if flags & {"--all", "--mirror"}:
-            classes.add("push-main")
-            continue
-        current_branch_needed = not refspecs and not (flags & {"--tags", "--follow-tags"})
-        for ref in refspecs:
-            dst = ref.lstrip("+").split(":")[-1]
-            dst = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst
-            if dst in _MAIN_BRANCHES:
-                classes.add("push-main")
-            elif dst == "HEAD" or ("$" in dst and "deploy-tag" not in classes):
-                current_branch_needed = True
-        if current_branch_needed and branch_of(repo_dir) in _MAIN_BRANCHES:
-            classes.add("push-main")
+            mine.add("push-main")
+        else:
+            current_branch_needed = not refspecs and not (flags & {"--tags", "--follow-tags"})
+            for ref in refspecs:
+                dst = ref.lstrip("+").split(":")[-1]
+                dst = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst
+                if dst in _MAIN_BRANCHES:
+                    mine.add("push-main")
+                elif dst == "HEAD" or ("$" in dst and "deploy-tag" not in classes | mine):
+                    current_branch_needed = True
+            if current_branch_needed and branch_of(repo_dir) in _MAIN_BRANCHES:
+                mine.add("push-main")
+        classes |= mine
+        for cls in mine:
+            note_pipe(m, cls)
     return classes
 
 
@@ -680,14 +721,25 @@ def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
                 sleep=time.sleep, branch_of=_current_branch,
                 scope: RepoScope | None = None, history_scope: RepoScope | None = None) -> str | None:
     cmd = str((payload.get("tool_input") or {}).get("command") or "")
+    piped: set[str] = set()
     classes = classify(cmd, payload.get("cwd") or os.getcwd(), branch_of=branch_of,
-                       scope=scope or RepoScope.from_config(unknown_guarded=True))
+                       scope=scope or RepoScope.from_config(unknown_guarded=True), piped=piped)
     if not classes:
         return None
     what = ", ".join(sorted(classes))
     if payload.get("agent_id"):
         return (f"Blocked: this command performs a release action ({what}), and release actions "
                 f"run only in the main conversation, never inside a subagent.")
+    if piped:
+        # A pipe reports its LAST command's exit status, so a release that failed reads as
+        # one that ran, and the ledger spends the approval on it. Seen 2026-10-07: a
+        # `git push origin deploy-… 2>&1 | tail -3` whose push failed ("src refspec …
+        # does not match any") came back as exit 0 and used up a /deploy approval.
+        return (f"Refused before running: the output of this release action "
+                f"({', '.join(sorted(piped))}) goes into a pipe. A pipe reports the exit status of "
+                f"its last command, so a push or merge that fails would read as success and use up "
+                f"the user's approval. Run the release command without a pipe; to keep the output "
+                f"short, redirect it to a file and read that afterwards. Nothing was used.")
     missing: list[str] = []
     history_scope = history_scope or RepoScope.from_config(unknown_guarded=False)
     for attempt in range(2):

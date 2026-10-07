@@ -383,6 +383,43 @@ class BashArmTest(unittest.TestCase):
         t.bash("gh pr merge 12 --squash", result=False)
         self.assertIsNotNone(bash_decision(t, "gh pr merge 12 --squash"))
 
+    def test_a_piped_release_is_refused_before_it_can_use_an_approval(self):
+        # 2026-10-07: `git push origin deploy-… 2>&1 | tail -3` failed, came back exit 0
+        # through the pipe, and used up the /deploy approval.
+        t = Transcript().typed("approve", "deploy")
+        reason = bash_decision(t, "git push origin deploy-20261007-091957 2>&1 | tail -3")
+        self.assertIn("pipe", reason)
+        self.assertIn("deploy-tag", reason)
+        t = Transcript().typed("claude-tdd-workflow:ship")
+        self.assertIn("pipe", bash_decision(t, "gh pr merge 12 --squash |& tail -2"))
+
+    def test_a_pipe_elsewhere_in_the_command_is_not_the_release_output(self):
+        t = Transcript().typed("approve", "deploy")
+        self.assertIsNone(bash_decision(
+            t,
+            'SHA=$(git ls-remote origin refs/heads/main | cut -f1)\n'
+            'git tag deploy-20261007-1 "$SHA" && git push origin deploy-20261007-1',
+        ))
+        self.assertIsNone(bash_decision(t, "git push origin deploy-20261007-1 > /tmp/out 2>&1"))
+        t = Transcript().typed("claude-tdd-workflow:ship")
+        self.assertIsNone(bash_decision(t, "gh pr merge 12 --squash || echo 'merge failed'"))
+        self.assertIsNone(bash_decision(t, "gh pr merge 12 --squash --body 'a | b'"))
+
+    def test_stops_at_pipe_reads_redirects_and_operators(self):
+        cases = {
+            "git push origin x | tail": True,
+            "git push origin x 2>&1 | tail": True,
+            "git push origin x |& tail": True,
+            "git push origin x &> /tmp/o | tail": True,
+            "git push origin x || true": False,
+            "git push origin x && echo ok": False,
+            "git push origin x; echo ok": False,
+            "git push origin x > /tmp/o 2>&1": False,
+            "git push origin x &": False,
+        }
+        for cmd, expected in cases.items():
+            self.assertEqual(gate._stops_at_pipe(gate.mask_inert(cmd), 0), expected, cmd)
+
     def test_ordinary_commands_never_read_the_transcript(self):
         payload = {"tool_input": {"command": "git push -u origin feature"}, "transcript_path": "/nonexistent",
                    "cwd": "/repo"}
