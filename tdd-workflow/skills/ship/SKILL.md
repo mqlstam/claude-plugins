@@ -3,7 +3,7 @@ name: ship
 description: Validate, commit, push, and create PR for current work. Runs when the user types /ship, or when Claude invokes it after the user typed /approve ship (one run).
 release-actions: merge
 argument-hint: "[PR title]"
-allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node *), Bash(jq *)
+allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py *)
 ---
 
 # Ship
@@ -19,7 +19,7 @@ allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node
 
 Measured over 47 ships: median invoke→merge **36 min**, p90 **140 min**, and **46%
 of tool wall-clock was `sleep`/poll loops** around a gate that exceeds the 10-minute
-`Bash` ceiling and gets backgrounded. Two rules, both non-negotiable:
+`Bash` ceiling and gets backgrounded. Three rules, all non-negotiable:
 
 1. **Split the gate into calls that FIT under the ceiling.** Never one
    `lint typecheck test build && every check` mega-command. The split below is also
@@ -28,7 +28,13 @@ of tool wall-clock was `sleep`/poll loops** around a gate that exceeds the 10-mi
    you WAIT FOR THE COMPLETION NOTIFICATION.** Do not write a `sleep 60`/poll loop.
    Do not re-run a command "to see where it is". While a background call runs, do
    something useful in the foreground (read the diff, draft the PR body) or simply
-   wait.
+   wait. The plugin's `bash-shape-guard` hook refuses a foreground `sleep` above
+   10 s, a `sleep` inside a loop, and a `| tail` whose status is then used, in
+   subagents too.
+3. **Independent steps run side by side.** 4a and 4c read only the source and
+   neither waits on the other: issue them in ONE message as two tool calls. 4b
+   starts once 4a is green, in the background; step 5 runs after 4b, because some
+   checks read the build output 4b writes.
 
 ## Validation
 
@@ -90,10 +96,11 @@ Based on the context above:
    exports break a fake-timer unit test in core and turn the provisioning contract
    into an RLS 42501.
 
-   ```bash
-   git fetch --quiet origin main 2>/dev/null || true
+   First, as its own plain command (git inside a compound command is refused in a
+   worktree session): `git fetch --quiet origin main`.
 
-   # 4a — fast (~45 s cold, ~0.3 s warm). Foreground.
+   ```bash
+   # 4a — fast (~45 s cold, ~0.3 s warm). Foreground, in the same message as 4c.
    node scripts/gate-lock.mjs run --label "ship lint+typecheck" -- \
      env TURBO_SCM_BASE=origin/main pnpm exec turbo run lint typecheck --affected \
    && node scripts/gate-record.mjs record turbo:lint-typecheck pass --by ship
@@ -119,9 +126,10 @@ Based on the context above:
    `pnpm test --changed origin/main` (else `pnpm test`), same split, same lock.
 
    ```bash
-   # 4c — formatting. lint-staged covers the commit path; this catches amends and
-   #      out-of-scope adds. Run it BEFORE the commit so lint-staged has nothing to
-   #      rewrite — a hook that reformats on the way in invalidates the gate record.
+   # 4c — formatting, beside 4a (it takes no lock and reads only the source).
+   #      lint-staged covers the commit path; this catches amends and out-of-scope
+   #      adds. Run it BEFORE the commit so lint-staged has nothing to rewrite — a
+   #      hook that reformats on the way in invalidates the gate record.
    pnpm format:check && node scripts/gate-record.mjs record format:check pass --by ship
    ```
 
@@ -168,10 +176,13 @@ Steps 1-3 in a SINGLE message; then the PR; then the merge.
 
 1. Stage all relevant changed files
 2. Create a commit using conventional format (`feat:`, `refactor:`, `fix:`)
-3. **Promote the gate record onto the new commit, then push:**
+3. **Promote the gate record onto the new commit, then push** (two separate plain
+   commands: git inside a compound command is refused in a worktree session):
 
    ```bash
    node scripts/gate-record.mjs promote
+   ```
+   ```bash
    git push -u origin <branch>
    ```
 
@@ -201,37 +212,54 @@ Steps 1-3 in a SINGLE message; then the PR; then the merge.
    ```bash
    gh pr create --title "<title>" --body "..."
    ```
-5. Squash-merge. **Inspect the branch-protection state first — do not blind-guess
-   `--auto || --admin`** (that silently force-merges when a required check is
-   stalled/absent). Pick deterministically:
-   ```bash
-   PR=$(gh pr view --json number -q .number)
-   required=$(gh api repos/:owner/:repo/branches/main/protection/required_status_checks \
-     --jq '.contexts | length' 2>/dev/null || echo 0)
-   if [ "$required" = 0 ]; then
-     # No required check (this repo, pre-beta) → clean squash, no --admin needed.
-     gh pr merge "$PR" --squash --delete-branch
-   else
-     cs=$(gh pr checks "$PR" --json name,state -q '.[]|select(.name=="check")|.state' 2>/dev/null)
-     case "$cs" in
-       SUCCESS) gh pr merge "$PR" --squash --delete-branch ;;
-       *) echo "BLOCKED: required 'check' is $cs. Local /ship already validated; to force, re-run with FORCE_ADMIN=1."
-          [ "${FORCE_ADMIN:-0}" = 1 ] && gh pr merge "$PR" --squash --admin --delete-branch || exit 2 ;;
-     esac
-   fi
-   ```
-   `--admin` only ever fires behind an explicit `FORCE_ADMIN=1` — never silently.
+5. **Squash-merge once GitHub has settled the PR for the commit you pushed.**
+   GitHub recomputes mergeability in the background after every push. A merge in
+   that window was answered "merge conflicts" for a branch without any, the session
+   merged main again and re-ran the gate, and push-to-merge reached a p90 of
+   26.6 min. Every command below is one plain command with the values written out.
 
-   **Read the merge's verdict from the PR, not from the command's exit code.** From a
-   worktree, `gh pr merge --delete-branch` merges on GitHub and then fails locally with
-   `fatal: 'main' is already used by worktree at …`, because it tries to check out
-   `main` to delete the local branch (seen on both ships of 2026-10-07). So after the
-   merge command, whatever it printed:
-   ```bash
-   gh pr view "$PR" --json state,mergeCommit -q '.state + " " + (.mergeCommit.oid // "-")'
-   ```
-   `MERGED <sha>` is the verdict; anything else is a failed merge, and its output is
-   the reason. The remote branch is deleted on the merged path either way.
+   a. **Read the PR:** `gh pr view --json number,headRefOid,headRefName`. From here
+      on `<PR>`, `<SHA>` (the head you pushed) and `<BRANCH>` are written literally.
+
+   b. **Wait for the settled state, in the background.** With
+      `run_in_background: true`:
+      `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py <PR> --head <SHA>`
+      and act on its completion notification (do not poll it, do not `sleep`). It
+      counts a state only once `headRefOid` is `<SHA>`, and stops at 180 s (six of
+      seven measured settles took at most 26 s). Its last line and exit:
+      - `0` `CLEAN` / `HAS_HOOKS` → merge now (c), in the same minute.
+      - `6` `UNSTABLE` at the bound → mergeable, but a check that is not required is
+        failing or pending: merge (c), and name those checks from
+        `gh pr checks <PR>` in your report.
+      - `3` `DIRTY` / `BEHIND` → `git fetch origin main`, then
+        `git rev-list --count HEAD..origin/main`. `0` means the state was stale: run
+        the wait again. Otherwise main moved: back to "Main moved since the gate?"
+        above, then push and wait again.
+      - `4` `BLOCKED` → a required check or review is missing: `gh pr checks <PR>`,
+        report it, STOP. `--admin` only when the user explicitly asks to force:
+        `gh pr merge <PR> --squash --admin --match-head-commit <SHA>`. Never silently.
+      - `5` `merge_state_wait_deadline` → report the state it names and STOP; the
+        user decides.
+      - `7` → the PR is no longer open: go to (d).
+
+   c. **Merge:** `gh pr merge <PR> --squash --match-head-commit <SHA>`. No pipe (the
+      release gate refuses a piped release: a pipe reports its last command's
+      status). No `--delete-branch`: in a worktree gh merges on GitHub, then checks
+      out `main` to delete the local branch, fails with `fatal: 'main' is already
+      used by worktree at …`, exits 1 after a SUCCESSFUL merge (2026-10-07 and
+      10-12), and never reaches the remote branch, which it deletes after the local
+      one. `--match-head-commit` makes GitHub refuse if the head moved since (b).
+
+   d. **The verdict comes from the PR, never from the merge command's exit code:**
+      `gh pr view <PR> --json state,mergeCommit -q '.state + " " + (.mergeCommit.oid // "-")'`.
+      `MERGED <sha>` is the verdict; anything else is a failed merge, and the merge
+      command's output is the reason.
+
+   e. **Delete the remote branch, after `MERGED` only:**
+      `gh api -X DELETE repos/:owner/:repo/git/refs/heads/<BRANCH>`, the PR's own
+      head branch, never `main`/`master` (the release gate refuses deleting main
+      through the API). A 422 "Reference does not exist" means the repository's
+      "Automatically delete head branches" setting already removed it: done.
 
 ## After the merge — reclaim, then hand back
 

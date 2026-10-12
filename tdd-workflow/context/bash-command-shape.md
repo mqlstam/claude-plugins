@@ -1,0 +1,8 @@
+Bash commands on this machine: the shapes that pass, and why.
+
+- In a session isolated in a git worktree (and in every subagent it starts), Claude Code refuses a Bash command when it cannot verify from the text that any git it runs stays in the worktree. Measured 2026-09-01 to 10-12: 4,956 refusals, 70% in subagents. The refused shapes: a heredoc or `-c`/`-e` string fed to an interpreter (`python3 - <<'PY'`, `node -e "..."`); a value computed at runtime (`$VAR`, `$(...)`) as an argument to sed, awk, gh, docker, pnpm, find or node; shell text handed on (`sh -c '...'`, `bash scripts/wt.sh sh -c '...'`); `cd X && ...`; git inside a compound command or a loop.
+- The shapes that pass: write the program to a file with the Write tool (`/tmp/<task>/edit.py`) and run `python3 /tmp/<task>/edit.py`; spell paths and values literally; one plain command per Bash call; git as its own bare command from the worktree root; absolute paths instead of `cd`. A refused command ran nothing.
+- The Bash tool's shell is zsh. `$ACCT:role/x` is read as the modifier `:r` (write `${ACCT}:role/x`), and an unquoted `$FLAGS` holding several words stays one argument (write flags literally).
+- The working directory persists between Bash calls, so a relative `cd ../..` compounds; absolute paths do not.
+- A pipeline reports its last command's exit status: `build 2>&1 | tail -4` exits 0 when the build failed. A command whose outcome matters writes its output to a file (`cmd > /tmp/x.log 2>&1; echo exit=$?`) and the file is read afterwards.
+- A wait longer than a few seconds runs with `run_in_background: true`; its completion notification arrives on its own, so polling its output with `sleep` is unnecessary.

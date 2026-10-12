@@ -68,7 +68,7 @@ class Transcript:
         self.lines.append({"type": "user", "message": {"role": "user", "content": content}, **extra})
         return self
 
-    def tool(self, name, tool_input, error=False, result=True, branch="feature"):
+    def tool(self, name, tool_input, error=False, result=True, branch="feature", output="x"):
         tid = self._id()
         self.lines.append({
             "type": "assistant", "cwd": "/repo", "gitBranch": branch,
@@ -77,7 +77,7 @@ class Transcript:
         })
         if result:
             self.lines.append({"type": "user", "message": {"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": tid, "content": "x", "is_error": error}]}})
+                {"type": "tool_result", "tool_use_id": tid, "content": output, "is_error": error}]}})
         return tid
 
     def skill(self, name, **kw):
@@ -109,16 +109,32 @@ def skill_decision(t, name, tool_use_id="toolu_now", **payload):
         os.unlink(path)
 
 
-def bash_decision(t, command, branch="feature", **payload):
+def no_github(run_id, _target_dir, _slug):
+    raise AssertionError(f"GitHub asked about run {run_id} for a command that needs no lookup")
+
+
+def bash_decision(t, command, branch="feature", run_info=no_github, **payload):
     path = t.write()
     try:
         return gate.decide_bash(
             {"tool_name": "Bash", "tool_input": {"command": command}, "transcript_path": path,
              "tool_use_id": "toolu_now", "cwd": "/repo", **payload},
             FakeResolver(), sleep=no_sleep, branch_of=on_branch(branch),
-            scope=gate.GUARD_ALL, history_scope=gate.GUARD_ALL)
+            scope=gate.GUARD_ALL, history_scope=gate.GUARD_ALL, run_info=run_info)
     finally:
         os.unlink(path)
+
+
+class FakeGitHub:
+    """What `gh api repos/.../actions/runs/<id>` answers, and how often it was asked."""
+
+    def __init__(self, runs):
+        self.runs = runs
+        self.asked = []
+
+    def __call__(self, run_id, _target_dir, _slug):
+        self.asked.append(run_id)
+        return self.runs.get(run_id)
 
 
 ENDOXIA_DIRS = {"/work/endoxia", "/tmp/endoxia-clone"}
@@ -429,6 +445,133 @@ class BashArmTest(unittest.TestCase):
 
         self.assertIsNone(gate.decide_bash(payload, FakeResolver(), read=read, sleep=no_sleep,
                                            branch_of=on_branch("feature")))
+
+
+class RerunCreditTest(unittest.TestCase):
+    """W10: a failed deploy's `gh run rerun <id> --failed` is covered once by the
+    approval that released it, and nothing broader."""
+
+    TAG = "deploy-20261012-101500"
+    GH = {"555": {"event": "push", "head_branch": TAG},
+          "556": {"event": "push", "head_branch": "deploy-20261011-090000"},
+          "557": {"event": "workflow_dispatch", "head_branch": "main"}}
+
+    def deployed(self, via_approve=True):
+        t = Transcript()
+        if via_approve:
+            t.typed("approve", "deploy")
+            t.skill("claude-tdd-workflow:deploy")
+        else:
+            t.typed("claude-tdd-workflow:deploy")
+        t.bash(f"git tag {self.TAG} abc123")
+        t.bash(f"git push origin {self.TAG}")
+        return t
+
+    def test_a_rerun_of_the_run_the_approved_tag_started_is_covered(self):
+        gh = FakeGitHub(self.GH)
+        self.assertIsNone(bash_decision(self.deployed(), "gh run rerun 555 --failed", run_info=gh))
+        self.assertIsNone(bash_decision(self.deployed(via_approve=False), "gh run rerun 555 --failed",
+                                        run_info=gh))
+        self.assertIsNone(bash_decision(self.deployed(), "gh run rerun 555 --failed > /tmp/rr.log 2>&1",
+                                        run_info=gh))
+        self.assertIn("555", gh.asked)
+
+    def test_only_once(self):
+        t = self.deployed()
+        t.bash("gh run rerun 555 --failed")
+        reason = bash_decision(t, "gh run rerun 555 --failed", run_info=FakeGitHub(self.GH))
+        self.assertIn("rerun", reason)
+        self.assertIn("already re-run once", reason)
+
+    def test_a_failed_rerun_does_not_use_it(self):
+        t = self.deployed()
+        t.bash("gh run rerun 555 --failed", error=True)
+        self.assertIsNone(bash_decision(t, "gh run rerun 555 --failed", run_info=FakeGitHub(self.GH)))
+
+    def test_nothing_broader(self):
+        t = self.deployed()
+        gh = FakeGitHub(self.GH)
+        self.assertIn("rerun", bash_decision(t, "gh run rerun 556 --failed", run_info=gh))  # another tag's run
+        self.assertIn("rerun", bash_decision(t, "gh run rerun 557 --failed", run_info=gh))  # a dispatch
+        self.assertIn("dispatch", bash_decision(t, "gh run rerun 555"))  # every job, not the failed ones
+        self.assertIn("dispatch", bash_decision(t, "gh run rerun 555 --failed --debug"))
+        self.assertIn("dispatch", bash_decision(t, 'gh run rerun "$RID" --failed'))
+        self.assertIn("dispatch", bash_decision(t, "gh workflow run deploy.yml"))
+
+    def test_no_credit_before_the_release_ran_or_when_it_failed(self):
+        gh = FakeGitHub(self.GH)
+        t = Transcript().typed("approve", "deploy")
+        self.assertIn("rerun", bash_decision(t, "gh run rerun 555 --failed", run_info=gh))
+        t = Transcript().typed("claude-tdd-workflow:deploy")
+        t.bash(f"git push origin {self.TAG}", error=True)
+        self.assertIn("rerun", bash_decision(t, "gh run rerun 555 --failed", run_info=gh))
+
+    def test_a_tag_pushed_through_a_variable_earns_no_credit(self):
+        t = Transcript().typed("claude-tdd-workflow:deploy")
+        t.bash(f'TAG="{self.TAG}"\ngit push origin "$TAG"')
+        self.assertIn("rerun", bash_decision(t, "gh run rerun 555 --failed", run_info=FakeGitHub(self.GH)))
+
+    def test_github_unreachable_refuses(self):
+        reason = bash_decision(self.deployed(), "gh run rerun 555 --failed", run_info=FakeGitHub({}))
+        self.assertIn("could not be asked", reason)
+
+    def test_a_dispatch_credits_the_run_url_it_printed(self):
+        t = Transcript().typed("approve", "release")
+        t.skill("release")
+        t.bash("gh workflow run deploy.yml -f promote_after_staging=true",
+               output="https://github.com/EndoxiaBV/Endoxia/actions/runs/777\n")
+        self.assertIsNone(bash_decision(t, "gh run rerun 777 --failed"))  # no lookup needed
+        t.bash("gh run rerun 777 --failed")
+        self.assertIn("rerun", bash_decision(t, "gh run rerun 777 --failed", run_info=FakeGitHub({})))
+
+    def test_a_url_printed_beside_the_dispatch_is_no_credit(self):
+        t = Transcript().typed("approve", "release")
+        t.skill("release")
+        t.bash("gh workflow run deploy.yml; echo https://github.com/o/r/actions/runs/888",
+               output="https://github.com/o/r/actions/runs/888\n")
+        self.assertIn("rerun", bash_decision(t, "gh run rerun 888 --failed", run_info=FakeGitHub({})))
+
+    def test_a_dispatch_approval_still_covers_a_rerun_as_before(self):
+        t = Transcript().typed("approve", "promote")
+        self.assertIsNone(bash_decision(t, "gh run rerun 999 --failed", run_info=FakeGitHub({})))
+        t.bash("gh run rerun 999 --failed")
+        self.assertIn("dispatch", bash_decision(t, "gh workflow run promote.yml -f sha=a"))
+
+    def test_the_pipe_and_subagent_refusals_stay(self):
+        t = self.deployed()
+        self.assertIn("pipe", bash_decision(t, "gh run rerun 555 --failed 2>&1 | tail -2"))
+        self.assertIn("subagent", bash_decision(t, "gh run rerun 555 --failed", agent_id="a1"))
+
+    def test_status_names_the_credit(self):
+        path = self.deployed().write()
+        try:
+            text = gate.status(path, "/repo", gate.GUARD_ALL)
+        finally:
+            os.unlink(path)
+        self.assertIn(self.TAG, text)
+
+
+class ClassifyEdgesTest(unittest.TestCase):
+    def c(self, cmd):
+        return gate.classify(cmd, "/repo", branch_of=on_branch("feature"))
+
+    def test_help_is_not_a_release(self):
+        self.assertEqual(self.c("gh pr merge --help"), set())
+        self.assertEqual(self.c("gh workflow run -h"), set())
+        self.assertEqual(self.c("gh run rerun --help"), set())
+
+    def test_deleting_main_through_the_api_is_a_push_to_main(self):
+        self.assertEqual(self.c("gh api -X DELETE repos/:owner/:repo/git/refs/heads/main"), {"push-main"})
+        self.assertEqual(self.c("gh api --method PATCH repos/o/r/git/refs/heads/master -f sha=x"), {"push-main"})
+        self.assertEqual(self.c("gh api -X DELETE repos/:owner/:repo/git/refs/heads/worktree-x"), set())
+        self.assertEqual(self.c("gh api repos/:owner/:repo/git/refs/heads/main --jq .object.sha"), set())
+
+    def test_details_name_the_literal_tags_and_reruns(self):
+        details = {}
+        gate.classify("git push origin deploy-1 refs/tags/deploy-2 && gh run rerun 42 --failed -R o/r",
+                      "/repo", branch_of=on_branch("feature"), details=details)
+        self.assertEqual(details["tags"], ["deploy-1", "deploy-2"])
+        self.assertEqual(details["reruns"], [("42", "/repo", "o/r")])
 
 
 class FrontmatterTest(unittest.TestCase):

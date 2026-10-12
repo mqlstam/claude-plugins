@@ -14,50 +14,37 @@ and Claude Code's exit prompt covers the rest.
 
 ## Process
 
-1. **Identify PR**
-   If $ARGUMENTS provided, use as PR number or branch name.
-   Otherwise detect from current branch:
-   ```bash
-   gh pr view --json number,title,state,mergeable,mergeStateStatus
-   ```
+Every command below is one plain command with the values written out literally:
+no variables, no `$(...)`, no pipe on the merge (the release gate refuses a piped
+release, and a worktree session refuses commands it cannot read).
 
-2. **Verify mergeable**
-   - State must be `OPEN`
-   - `mergeable` must be `MERGEABLE` (no conflicts)
-   - If not mergeable, STOP and report why.
+1. **Identify the PR.** `$ARGUMENTS` is the PR number or branch, else the current
+   branch: `gh pr view <PR-or-branch> --json number,state,headRefOid,headRefName`.
+   `<PR>`, `<SHA>` (its head) and `<BRANCH>` are written literally from here on.
+   State must be `OPEN`; otherwise STOP and report it.
 
-3. **Inspect checks**
-   ```bash
-   gh pr checks
-   ```
-   Three buckets:
-   - **Failing required checks on active workflows** → STOP, report.
-   - **Failing checks from a disabled workflow** (e.g. `CI`, `Smoke`
-     when those workflows have been disabled in the Actions UI) → these
-     reflect a stale run; ignore them and proceed via `--admin`.
-   - **Pending required checks** on an active workflow → wait, or
-     proceed via `--admin` if the user explicitly asked to force-merge.
+2. **Wait for GitHub to settle its mergeability**, in the background
+   (`run_in_background: true`), and act on the completion notification:
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py <PR> --head <SHA>`.
+   Right after a push GitHub still reports the previous head's state, and a merge
+   in that window is answered "merge conflicts" for a branch without any.
+   - `0` `CLEAN` / `HAS_HOOKS` → merge (3).
+   - `6` `UNSTABLE` at the 180 s bound → a check that is not required is failing or
+     pending. `gh pr checks <PR>`: a check from a workflow that is disabled in the
+     Actions UI (`gh api 'repos/{owner}/{repo}/actions/workflows' --jq '.workflows[] | "\(.state)  \(.name)"'`)
+     reflects a stale run and is ignored; otherwise name it in the report. Merge (3).
+   - `3` `DIRTY` / `BEHIND` → conflicts or main moved: STOP and report.
+   - `4` `BLOCKED` → a required check or review is missing: STOP and report.
+     `--admin` only when the user explicitly asks to force:
+     `gh pr merge <PR> --squash --admin --match-head-commit <SHA>`. Never silently.
+   - `5` `merge_state_wait_deadline` → report the state it names and STOP.
+   - `7` → no longer open: go to (4).
 
-   Check which workflows are disabled before deciding:
-   ```bash
-   gh api 'repos/{owner}/{repo}/actions/workflows' \
-     --jq '.workflows[] | "\(.state)  \(.name)"'
-   ```
-
-4. **Squash merge — inspect state, don't blind-guess `--admin`.**
-   ```bash
-   required=$(gh api repos/:owner/:repo/branches/main/protection/required_status_checks \
-     --jq '.contexts | length' 2>/dev/null || echo 0)
-   if [ "$required" = 0 ]; then
-     gh pr merge <number> --squash --delete-branch     # no required check → clean
-   else
-     cs=$(gh pr checks <number> --json name,state -q '.[]|select(.name=="check")|.state' 2>/dev/null)
-     [ "$cs" = SUCCESS ] && gh pr merge <number> --squash --delete-branch \
-       || { echo "BLOCKED: 'check' is $cs — force only via FORCE_ADMIN=1"; \
-            [ "${FORCE_ADMIN:-0}" = 1 ] && gh pr merge <number> --squash --admin --delete-branch || exit 2; }
-   fi
-   ```
-   `--admin` only fires behind an explicit `FORCE_ADMIN=1` — never silently.
+3. **Squash-merge:** `gh pr merge <PR> --squash --match-head-commit <SHA>`.
+   No `--delete-branch`: in a worktree gh merges on GitHub, then checks out `main`
+   to delete the local branch, fails with `fatal: 'main' is already used by
+   worktree at …` and exits 1 after a SUCCESSFUL merge, before it reaches the
+   remote branch.
 
    **Merging does NOT deploy.** Deploy fires only on a `deploy-*` tag (or manual
    dispatch), never on a push to `main`. This brings work onto `main`; run
@@ -65,19 +52,22 @@ and Claude Code's exit prompt covers the rest.
    (Endoxia, slice 603) that tag reaches STAGING, and production is a separate
    **`/promote`**.
 
-5. **Verify**
-   ```bash
-   gh pr view <number> --json state,mergedAt,mergeCommit \
-     --jq '{state, mergedAt, sha: .mergeCommit.oid}'
-   ```
+4. **The verdict comes from the PR, never from the merge's exit code:**
+   `gh pr view <PR> --json state,mergedAt,mergeCommit --jq '{state, mergedAt, sha: .mergeCommit.oid}'`.
+   `MERGED` is the verdict; anything else is a failed merge, and the merge
+   command's output is the reason.
+
+5. **Delete the remote branch, after `MERGED` only:**
+   `gh api -X DELETE repos/:owner/:repo/git/refs/heads/<BRANCH>`. Never `main` or
+   `master`. A 422 "Reference does not exist" means the repository already deleted
+   it ("Automatically delete head branches").
 
 ## Local cleanup
 
 **Do NOT print cleanup instructions.** When the session is running inside
 a worktree, Claude Code's exit prompt offers to remove the worktree
-automatically. The remote branch is already gone via `--delete-branch`.
-Local branch / worktree pruning is the harness's responsibility, not
-the skill's.
+automatically. The remote branch was deleted in step 5. Local branch /
+worktree pruning is the harness's responsibility, not the skill's.
 
 Git itself refuses `git checkout main` / `git branch -d` from a worktree
 whose `main` is checked out in a sibling tree (`fatal: 'main' is already

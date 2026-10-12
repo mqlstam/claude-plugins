@@ -16,6 +16,10 @@ What it allows:
 - For each named release skill, you may invoke it ONCE in this session through the
   Skill tool. Its release action (merge, push to main, deploy tag, workflow
   dispatch) is then allowed once.
+- A release that ran may re-run the failed jobs of the run it started once,
+  `gh run rerun <id> --failed`, without a new approval (a deploy whose run failed
+  on a transient error, say). Any other re-run needs an approval of a skill that
+  dispatches (promote, release, hotfix).
 - A second run needs a second `/approve`. A different skill needs its own name:
   approving `deploy` does not approve `promote`.
 - It does not carry over to another session or worktree.

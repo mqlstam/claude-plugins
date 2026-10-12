@@ -21,10 +21,18 @@ Two layers, one script:
                            (incl. a bare push from main, --all, --mirror)
                deploy-tag  git push of a deploy-* tag, --tags, --follow-tags
                dispatch    gh workflow run, gh run rerun, gh api .../dispatches
+               rerun       gh run rerun <id> --failed (exactly that form)
 
              Each activation of a skill (typed, or invoked after /approve)
              covers its declared actions once; a SUCCESSFUL command of that
              class uses it up, a failed one does not (so a retry still works).
+             A release that ran also earns ONE `gh run rerun <id> --failed` of
+             the run it started, under the same approval: a deploy tag pushed by
+             its literal name (GitHub is asked whether run <id> is that tag's
+             push), or a dispatch whose own output printed the run's URL. Any
+             other rerun is a dispatch and needs a dispatch approval, as before.
+             Measured: 10 second approvals for a rerun since 2026-09-20, each
+             followed by a 13-29 min wait for the user.
              An unused `/approve <skill>` also covers one bare command of that
              skill's actions. The arm guards only the repositories named in
              release-approval-gate.json (the command's target: a preceding
@@ -63,6 +71,11 @@ import subprocess
 import sys
 import time
 from collections import Counter
+
+# The hook runs the script by path; tests load it with importlib under `python3 -I`,
+# which does not put the script's directory on sys.path. Name it explicitly.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shell_text import mask_inert  # noqa: E402
 
 ACTION_CLASSES = ("merge", "push-main", "deploy-tag", "dispatch")
 
@@ -213,71 +226,11 @@ class SkillResolver:
 # Bash classification.
 # --------------------------------------------------------------------------
 
-def mask_inert(cmd: str) -> str:
-    """Same-length copy of `cmd` with quoted strings and heredoc bodies blanked,
-    so `echo "... gh pr merge ..."` or a PR body is not read as a command, while
-    match offsets still index the raw string."""
-    out = list(cmd)
-    i, n = 0, len(cmd)
-    pending_heredocs: list[tuple[str, bool]] = []
-    while i < n:
-        ch = cmd[i]
-        if ch == "\\" and i + 1 < n:
-            i += 2
-            continue
-        if ch == "#" and (i == 0 or cmd[i - 1] in " \t\n;&|("):
-            j = cmd.find("\n", i)
-            j = n if j == -1 else j
-            for k in range(i, j):
-                out[k] = " "
-            i = j
-            continue
-        if ch == "'":
-            j = cmd.find("'", i + 1)
-            j = n - 1 if j == -1 else j
-            for k in range(i + 1, j):
-                out[k] = " "
-            i = j + 1
-            continue
-        if ch == '"':
-            j = i + 1
-            while j < n and cmd[j] != '"':
-                j += 2 if cmd[j] == "\\" else 1
-            j = min(j, n - 1)
-            for k in range(i + 1, j):
-                out[k] = " "
-            i = j + 1
-            continue
-        if cmd.startswith("<<", i) and not cmd.startswith("<<<", i):
-            m = re.match(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2", cmd[i:])
-            if m:
-                pending_heredocs.append((m.group(3), m.group(1) == "-"))
-                i += m.end()
-                continue
-        if ch == "\n" and pending_heredocs:
-            j = i + 1
-            while pending_heredocs and j <= n:
-                word, dash = pending_heredocs.pop(0)
-                while j < n:
-                    line_end = cmd.find("\n", j)
-                    line_end = n if line_end == -1 else line_end
-                    line = cmd[j:line_end]
-                    if (line.strip() if dash else line) == word:
-                        j = line_end + 1
-                        break
-                    for k in range(j, line_end):
-                        out[k] = " "
-                    j = line_end + 1
-            i = j
-            continue
-        i += 1
-    return "".join(out)
-
-
 _SEG_END = r"[^;&|\n]*"
 _GIT_PUSH = re.compile(r"\bgit\b((?:[ \t]+-[Cc][ \t]+\S+|[ \t]+--?[\w-]+(?:=\S+)?)*)[ \t]+push\b(" + _SEG_END + ")")
 _GH_PR_MERGE = re.compile(r"\bgh[ \t]+pr[ \t]+merge\b")
-_GH_WORKFLOW_RUN = re.compile(r"\bgh[ \t]+(?:workflow[ \t]+run|run[ \t]+rerun)\b")
+_GH_WORKFLOW_RUN = re.compile(r"\bgh[ \t]+workflow[ \t]+run\b")
+_GH_RUN_RERUN = re.compile(r"\bgh[ \t]+run[ \t]+rerun\b")
 _GH_API = re.compile(r"\bgh[ \t]+api\b(" + _SEG_END + ")")
 _DEPLOY_TAG_ASSIGN = re.compile(r"\b\w+=[\"']?deploy-")
 _PUSH_FLAGS_WITH_VALUE = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
@@ -403,11 +356,55 @@ def _stops_at_pipe(masked: str, start: int) -> bool:
     return False
 
 
+def _asks_for_help(segment: str) -> bool:
+    return any(t in ("--help", "-h") for t in _tokens(segment))
+
+
+def _rerun_of_one_run(segment: str) -> tuple[str, str | None] | None:
+    """(run id, -R slug) when the segment is exactly `gh run rerun <id> --failed`
+    (optionally `-R owner/repo`): a re-run of the failed jobs of one named run.
+    Any other form (all jobs, `--job`, `--debug`, an id computed at runtime) is
+    not, and stays a plain dispatch."""
+    try:
+        toks = shlex.split(segment, posix=True)[3:]
+    except ValueError:
+        return None
+    run_id, slug, failed = None, None, False
+    i = 0
+    while i < len(toks):
+        tok = toks[i]
+        if re.fullmatch(r"(?:\d*|&)>>?", tok):  # `> file`, `2>> file`: skip the target too
+            i += 2
+            continue
+        if re.match(r"(?:\d*|&)>", tok):  # `2>&1`, `>/tmp/x`
+            i += 1
+            continue
+        if tok == "--failed":
+            failed = True
+        elif tok in ("-R", "--repo") and i + 1 < len(toks):
+            slug = toks[i + 1]
+            i += 1
+        elif tok.startswith("--repo="):
+            slug = tok.split("=", 1)[1]
+        elif re.fullmatch(r"\d+", tok) and run_id is None:
+            run_id = tok
+        else:
+            return None
+        i += 1
+    return (run_id, slug) if run_id and failed else None
+
+
 def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = GUARD_ALL,
-             piped: set[str] | None = None) -> set[str]:
+             piped: set[str] | None = None, details: dict | None = None) -> set[str]:
     """The release action classes `cmd` performs. When `piped` is a set, the classes
-    whose own command sends its output into a pipe are added to it as well."""
+    whose own command sends its output into a pipe are added to it as well. When
+    `details` is a dict, it receives what a rerun credit needs: `tags` (deploy tags
+    pushed by their literal name) and `reruns` ((run id, target dir, -R slug) for
+    each `gh run rerun <id> --failed`)."""
     classes: set[str] = set()
+    if details is not None:
+        details.setdefault("tags", [])
+        details.setdefault("reruns", [])
     if not RELEASE_VERB_HINT.search(cmd):
         return classes
     masked = mask_inert(cmd)
@@ -422,13 +419,27 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
                             flag.group(1).strip("'\"") if flag else None)
 
     for m in _GH_PR_MERGE.finditer(masked):
-        if gh_guarded(m):
+        if gh_guarded(m) and not _asks_for_help(_segment(cmd, m.start())):
             classes.add("merge")
             note_pipe(m, "merge")
     for m in _GH_WORKFLOW_RUN.finditer(masked):
-        if gh_guarded(m):
+        if gh_guarded(m) and not _asks_for_help(_segment(cmd, m.start())):
             classes.add("dispatch")
             note_pipe(m, "dispatch")
+    for m in _GH_RUN_RERUN.finditer(masked):
+        segment = _segment(cmd, m.start())
+        if not gh_guarded(m) or _asks_for_help(segment):
+            continue
+        one = _rerun_of_one_run(segment)
+        cls = "rerun" if one else "dispatch"
+        classes.add(cls)
+        note_pipe(m, cls)
+        if one and details is not None:
+            details["reruns"].append((one[0], _target_dir(cmd, masked, m.start(), cwd), one[1]))
+    if details is not None:
+        # A dispatch's printed run URL becomes a rerun credit only when nothing else
+        # in the call could have printed it.
+        details["sole"] = not re.search(r"[;&|\n]", masked.strip())
     for m in _GH_API.finditer(masked):
         args = cmd[m.start(1):m.end(1)]
         api_slug = re.search(r"repos/([^/\s]+/[^/\s]+)/", args)
@@ -444,6 +455,11 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
         if "dispatches" in args:
             classes.add("dispatch")
             note_pipe(m, "dispatch")
+        # The API twin of `git push origin :main`: deleting or moving the main ref.
+        if re.search(r"git/refs/heads/(?:main|master)\b", args) and re.search(
+                r"(?:^|\s)(?:-X|--method)[ \t=]*(?:DELETE|PATCH)\b", args, re.I):
+            classes.add("push-main")
+            note_pipe(m, "push-main")
 
     for m in _GIT_PUSH.finditer(masked):
         git_opts = _tokens(cmd[m.start(1):m.end(1)])
@@ -474,6 +490,11 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
             "deploy-" in r or "refs/tags/" in r for r in refspecs
         ):
             mine.add("deploy-tag")
+            if details is not None:
+                for r in refspecs:
+                    name = r.lstrip("+").split(":")[-1].removeprefix("refs/tags/")
+                    if name.startswith("deploy-") and "$" not in name:
+                        details["tags"].append(name)
         elif any("$" in r for r in refspecs) and _DEPLOY_TAG_ASSIGN.search(cmd):
             mine.add("deploy-tag")
 
@@ -537,13 +558,43 @@ def approval_names(args: str) -> list[str]:
     return [bare(t) for t in re.split(r"[,\s]+", args) if bare(t)]
 
 
+# One GitHub REST round trip (measured 0.53 s from this machine, 2026-10-12). The
+# hook's own budget is 30 s (hooks.json) and a decision reads the transcript at
+# most twice with a 1 s pause; each run id is looked up once per read, so 10 s
+# per lookup keeps a slow API inside the hook budget instead of killing the hook.
+GH_API_TIMEOUT_S = 10
+
+
+def gh_run_info(run_id: str, target_dir: str, slug: str | None) -> dict | None:
+    """The run's trigger as GitHub recorded it: {"event", "head_branch"}. For a
+    tag push, `head_branch` is the tag. None when it cannot be read."""
+    path = (f"repos/{slug}/actions/runs/{run_id}" if slug
+            else f"repos/{{owner}}/{{repo}}/actions/runs/{run_id}")
+    cwd = target_dir if os.path.isdir(target_dir) else None
+    if cwd is None and not slug:
+        return None
+    try:
+        out = subprocess.run(["gh", "api", path, "--jq", "{event: .event, head_branch: .head_branch}"],
+                             cwd=cwd, capture_output=True, text=True, timeout=GH_API_TIMEOUT_S)
+        return json.loads(out.stdout) if out.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+
+
 class Ledger:
-    def __init__(self, actions_of=lambda _name: ()):
+    def __init__(self, actions_of=lambda _name: (), run_info=gh_run_info):
         self.approvals: Counter = Counter()  # bare skill name -> unused approvals
         self.grants: Counter = Counter()  # action class -> unused activations
         self.last_typed: str | None = None  # bare name of the last typed command
         self.last_approve_args: list[str] = []
         self._actions_of = actions_of
+        # Runs a release of THIS session started, each re-runnable once with
+        # `gh run rerun <id> --failed` under the approval that released it:
+        # ("tags", frozenset of deploy tags pushed) or ("run", id a dispatch printed).
+        self.run_credits: list[tuple[str, object]] = []
+        self.reruns_used: set[str] = set()
+        self._run_info = run_info
+        self._info: dict[str, dict | None] = {}
 
     def approval_covering(self, action: str) -> str | None:
         """An unused approval of a skill whose declared actions include
@@ -589,10 +640,44 @@ class Ledger:
             if name:
                 self.approvals[name] -= 1
 
+    def rerun_credit(self, run_id: str, target_dir: str, slug: str | None) -> bool | None:
+        """True when `run_id` is a run a release of this session started and it has
+        not been re-run under that credit yet; None when GitHub could not say."""
+        if run_id in self.reruns_used:
+            return False
+        if ("run", run_id) in self.run_credits:
+            return True
+        tags = set().union(*(v for k, v in self.run_credits if k == "tags"))
+        if not tags:
+            return False
+        if run_id not in self._info:
+            self._info[run_id] = self._run_info(run_id, target_dir, slug)
+        info = self._info[run_id]
+        if info is None:
+            return None
+        return info.get("event") == "push" and info.get("head_branch") in tags
+
+    def rerun_covered(self, run_id: str, target_dir: str, slug: str | None) -> bool:
+        return self.rerun_credit(run_id, target_dir, slug) is True or self.covers("dispatch")
+
+    def released(self, classes, details: dict, output: str) -> None:
+        """A release command that ran: use what covered it, and credit the runs it started."""
+        for run_id, target_dir, slug in details.get("reruns", []):
+            if self.rerun_credit(run_id, target_dir, slug) is not True:
+                self.release_ran({"dispatch"})  # unknown is charged too: a refusal, never a release
+            self.reruns_used.add(run_id)
+        self.release_ran(set(classes) - {"rerun"})
+        if "deploy-tag" in classes and details.get("tags"):
+            self.run_credits.append(("tags", frozenset(details["tags"])))
+        if "dispatch" in classes and details.get("sole"):
+            for run_id in re.findall(r"/actions/runs/(\d+)", output or ""):
+                self.run_credits.append(("run", run_id))
+
 
 def build_ledger(transcript_path: str, current_tool_use_id: str | None,
-                 resolver: SkillResolver, scope: RepoScope | None = None) -> Ledger:
-    ledger = Ledger(resolver.actions)
+                 resolver: SkillResolver, scope: RepoScope | None = None,
+                 run_info=gh_run_info) -> Ledger:
+    ledger = Ledger(resolver.actions, run_info)
     scope = scope or RepoScope.from_config(unknown_guarded=False)
     pending: dict[str, tuple] = {}
     # Claude Code can write ONE typed command into the transcript twice: same
@@ -640,7 +725,7 @@ def build_ledger(transcript_path: str, current_tool_use_id: str | None,
                         continue
                     effect = pending.pop(block.get("tool_use_id"), None)
                     if effect and not _is_error_result(block):
-                        _apply(ledger, effect)
+                        _apply(ledger, effect, _result_text(block))
             elif entry.get("type") == "assistant" and not entry.get("isSidechain"):
                 for block in content or []:
                     if not isinstance(block, dict) or block.get("type") != "tool_use":
@@ -656,26 +741,37 @@ def build_ledger(transcript_path: str, current_tool_use_id: str | None,
                             pending[tid] = ("skill", name, actions)
                     elif block.get("name") == "Bash":
                         branch = entry.get("gitBranch")
+                        details: dict = {}
                         classes = classify(
                             str(tool_input.get("command") or ""),
                             entry.get("cwd") or resolver.cwd,
                             branch_of=lambda _d, b=branch: b,
                             scope=scope,
+                            details=details,
                         )
                         if classes:
-                            pending[tid] = ("bash", classes)
+                            pending[tid] = ("bash", classes, details)
     # A tool call whose result never reached the transcript may still have run:
     # count it as used. The wrong answer here is a refusal, never a release.
     for effect in pending.values():
-        _apply(ledger, effect)
+        _apply(ledger, effect, "")
     return ledger
 
 
-def _apply(ledger: Ledger, effect: tuple) -> None:
+def _result_text(block: dict) -> str:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(str(c.get("text") or "") for c in content if isinstance(c, dict))
+    return ""
+
+
+def _apply(ledger: Ledger, effect: tuple, output: str) -> None:
     if effect[0] == "skill":
         ledger.skill_ran(effect[1], effect[2])
     else:
-        ledger.release_ran(effect[1])
+        ledger.released(effect[1], effect[2], output)
 
 
 # --------------------------------------------------------------------------
@@ -719,11 +815,14 @@ def decide_skill(payload: dict, resolver: SkillResolver, read=build_ledger, slee
 
 def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
                 sleep=time.sleep, branch_of=_current_branch,
-                scope: RepoScope | None = None, history_scope: RepoScope | None = None) -> str | None:
+                scope: RepoScope | None = None, history_scope: RepoScope | None = None,
+                run_info=gh_run_info) -> str | None:
     cmd = str((payload.get("tool_input") or {}).get("command") or "")
     piped: set[str] = set()
+    details: dict = {}
     classes = classify(cmd, payload.get("cwd") or os.getcwd(), branch_of=branch_of,
-                       scope=scope or RepoScope.from_config(unknown_guarded=True), piped=piped)
+                       scope=scope or RepoScope.from_config(unknown_guarded=True), piped=piped,
+                       details=details)
     if not classes:
         return None
     what = ", ".join(sorted(classes))
@@ -744,29 +843,37 @@ def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
     history_scope = history_scope or RepoScope.from_config(unknown_guarded=False)
     for attempt in range(2):
         ledger = read(payload.get("transcript_path") or "", payload.get("tool_use_id"), resolver,
-                      history_scope)
-        missing = sorted(c for c in classes if not ledger.covers(c))
+                      history_scope, run_info)
+        missing = sorted(c for c in classes - {"rerun"} if not ledger.covers(c))
+        if any(not ledger.rerun_covered(*r) for r in details.get("reruns", [])):
+            missing.append("rerun")
         if not missing:
             return None
         if attempt == 0:
             sleep(TRANSCRIPT_LAG_RETRY_S)
+    rerun_note = ""
+    if "rerun" in missing:
+        rerun_note = (" A `gh run rerun <id> --failed` is covered once, without a new approval, for "
+                      "a run that a release approved in this session started (the deploy tag it "
+                      "pushed by name, or the run URL its dispatch printed); this run is not one of "
+                      "those, was already re-run once, or GitHub could not be asked.")
     return (f"Blocked: this command performs a release action ({', '.join(missing)}) that the "
             f"user has not approved in this session. Only the user authorises a release: they "
             f"type the skill (/ship, /quickship, /merge, /deploy, /promote, /release, /hotfix), or "
             f"approve it ahead with `/approve <skill>`, which covers that skill's release action "
             f"once (through the skill, or as this bare command). A request in plain words is not "
             f"an approval: ask the user to type it. A ref pushed through a variable is read as "
-            f"the current branch, so push a tag by its literal name. Say that you were blocked; "
-            f"do not route around this.")
+            f"the current branch, so push a tag by its literal name.{rerun_note} Say that you were "
+            f"blocked; do not route around this.")
 
 
 # --------------------------------------------------------------------------
 # Status (for /approve) and entry point.
 # --------------------------------------------------------------------------
 
-def status(transcript_path: str, cwd: str) -> str:
+def status(transcript_path: str, cwd: str, scope: RepoScope | None = None) -> str:
     resolver = SkillResolver(cwd)
-    ledger = build_ledger(transcript_path, None, resolver)
+    ledger = build_ledger(transcript_path, None, resolver, scope)
     lines = []
     if ledger.last_approve_args:
         lines.append("Last /approve named: " + ", ".join(ledger.last_approve_args))
@@ -776,6 +883,12 @@ def status(transcript_path: str, cwd: str) -> str:
     open_approvals = {k: v for k, v in ledger.approvals.items() if v > 0 and resolver.actions(k)}
     lines.append("Unused approvals this session: " + (
         ", ".join(f"{k} x{v}" for k, v in sorted(open_approvals.items())) or "none"))
+    credits = [f"run {v}" if k == "run" else "the run of " + ", ".join(sorted(v))
+               for k, v in ledger.run_credits]
+    if credits:
+        lines.append("Re-runnable once with `gh run rerun <id> --failed`: " + "; ".join(credits)
+                     + (f" (already re-run: {', '.join(sorted(ledger.reruns_used))})"
+                        if ledger.reruns_used else ""))
     return "\n".join(lines)
 
 
