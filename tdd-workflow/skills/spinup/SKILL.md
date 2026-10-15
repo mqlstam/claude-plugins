@@ -36,6 +36,23 @@ for per-worktree stacks — use `pnpm dev:up` on the canonical checkout instead.
 - `<service> ...` — an explicit root list, e.g. `/spinup core legal search ml`
   when the slice needs web fetch and knowledge retrieval but no workers.
 
+## One command, when the repository has it
+
+If the repository carries `scripts/worktree-stack.sh` (Endoxia since slice 751),
+the steps below are that script, and it also prepares a worktree no harness set
+up (env links, port lease, dependencies via `scripts/setup-worktree.sh`). Run
+it with `run_in_background: true` (a first spinup builds the image, minutes),
+then report its URLs:
+
+```bash
+bash scripts/worktree-stack.sh up              # light
+bash scripts/worktree-stack.sh up --full       # everything
+bash scripts/worktree-stack.sh up core legal ml   # explicit roots
+```
+
+`bash scripts/worktree-stack.sh down` is the soft-stop, `status` the overview.
+Use the numbered steps only in a repository without that script.
+
 ## Steps (do in order; STOP and surface any failure — never retry blindly)
 
 1. **Claim the port lease + point DB tooling at this worktree** (sourced — sets
@@ -79,6 +96,10 @@ for per-worktree stacks — use `pnpm dev:up` on the canonical checkout instead.
    ```bash
    ./scripts/worktree-chrome.sh
    ```
+   If this worktree had no port lease when the session started, the
+   `chrome-devtools` MCP server refused to start: `scripts/mcp-chrome-devtools.sh`
+   only reads the lease, it never claims one (Endoxia slice 750). Step 1 has
+   claimed it now, so ask the user to reconnect `chrome-devtools` with `/mcp`.
 6. **Start the host BFF on this worktree's port.** In a human terminal:
    ```bash
    PORT="$WT_BFF_PORT" pnpm dev

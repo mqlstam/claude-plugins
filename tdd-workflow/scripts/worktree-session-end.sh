@@ -31,6 +31,28 @@
 # ENDOXIA_WORKTREE_RETIRE_SCRIPT overrides the retire script's path. It exists
 # for the end-to-end probe, which must run a retire script that is not on the
 # main checkout yet; nothing else sets it.
+#
+# A SESSION HOSTED PROGRAMMATICALLY IS SKIPPED (1.3.1). The end of an Agent SDK
+# session says nothing about whether a person is done with the worktree: T3
+# Code (which drives Claude Code through the TypeScript Agent SDK) stops a
+# thread's `claude` after 30 minutes without a turn (its ProviderSessionReaper)
+# while the owner may still be testing that worktree's stack in a browser, and
+# resumes the same thread later with a fresh process. A soft-stop there takes
+# the stack, the dev server and the browser down mid-test. The signal is
+# CLAUDE_CODE_ENTRYPOINT, which Claude Code sets on its own process and a hook
+# inherits (hooks run with Claude Code's environment):
+#   cli      an interactive `claude` (measured: this is what `claude --worktree` has)
+#   sdk-ts   the TypeScript Agent SDK (measured 2026-10-14 in the environment of
+#            the `claude` T3 0.0.45 runs, beside CLAUDE_AGENT_SDK_VERSION=0.3.276;
+#            and in a SessionEnd hook's own environment, probed with a throwaway
+#            hook: both variables arrive)
+#   sdk-py   the Python Agent SDK
+#   sdk-cli  `claude -p` (measured: a SessionEnd hook of a `claude -p` run sees it)
+# Every `sdk-*` value is skipped, and so is any session carrying
+# CLAUDE_AGENT_SDK_VERSION: a programmatic host decides when its sessions end,
+# and that decision is not a person leaving. The repository's SessionStart
+# sweep still soft-stops an idle stack after its idle bound and retires a
+# removed worktree's stack, so nothing is left running for good.
 set -uo pipefail
 
 input="$(cat 2>/dev/null || true)"
@@ -53,6 +75,15 @@ note() {
   mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
   printf '%s session-end: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG" 2>/dev/null || true
 }
+
+entry="${CLAUDE_CODE_ENTRYPOINT:-}"
+case "$entry" in
+  sdk-*) note "skipped $WT — session hosted by the Agent SDK (entrypoint $entry); its host decides when it ends"; exit 0 ;;
+esac
+# Only the entrypoint decides. CLAUDE_AGENT_SDK_VERSION is not a signal: the VS Code
+# extension's `claude` carries it too (entrypoint claude-vscode), and the SDK writes it
+# into its host's own environment, so a person's session started from a T3 terminal can
+# inherit it. Keying on it skipped real people leaving a worktree (review, 2026-10-14).
 
 # Run a command in a new session, detached from this hook's process group and
 # terminal, so neither the hook's end nor the exiting `claude` can take it down.

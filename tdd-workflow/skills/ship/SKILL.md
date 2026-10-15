@@ -295,6 +295,14 @@ Steps 1-3 in a SINGLE message; then the PR; then the merge.
    session-start sweep once its work is on main, it is clean and it has been unused
    for a week. Say this in one line when the merge is done.
 
+   **In a T3 Code thread** (the session runs in `~/.t3/worktrees/...`, or
+   `CLAUDE_CODE_ENTRYPOINT` is `sdk-*`) there is no exit prompt. The step is:
+   settle the thread in T3 (T3 also settles it by itself once the PR merged). In
+   repositories that read T3's state (Endoxia, slice 752) the session-start sweep
+   then stops its stack at once and removes its checkout when it is clean and its
+   work is on main; T3 keeps the branch and recreates the checkout if the thread
+   continues. Say that instead.
+
 **Merging does NOT deploy to production.** Deploy is decoupled: it fires only on a
 `deploy-*` tag (or manual dispatch), not on a push to `main`. `/ship` lands your work
 on `main`; nothing reaches a box until you explicitly run **`/deploy`**, and where a
