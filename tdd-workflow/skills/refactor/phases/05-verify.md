@@ -62,7 +62,8 @@ on that final tree, with `run_in_background: true`** — `pnpm ship:gate --label
 with the Bash `timeout` at `7200000` (a full gate may hold for 75 minutes) and the
 additions the diff needs with one `--reason` for them all, when the repo's
 `package.json` has `ship:gate`; otherwise the repo's own lint, typecheck and test commands, each its
-own background call. The feature workflow's VERIFY step 3 says how to choose the
+own background call, the test command under the repo's machine-wide gate lock where it
+has one (`node scripts/gate-lock.mjs run --label "verify test" -- pnpm test`). The feature workflow's VERIFY step 3 says how to choose the
 additions; a refactor that moves a shared module usually warrants the consumers'
 packages, or `--full`. Record nothing else: `ship:gate` records the tree it proved,
 and `/ship`, `pre-push` and the land queue reuse it for the identical tree.

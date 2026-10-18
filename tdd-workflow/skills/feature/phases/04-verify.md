@@ -90,7 +90,10 @@ on that final tree, with `run_in_background: true`.**
   record for the identical tree: that is why a `/ship` after a green VERIFY is fast.
 - Otherwise: the repo's own lint, typecheck and test commands (`pnpm lint`,
   `pnpm typecheck`, `pnpm test`, or what its `package.json` names), each its own
-  background call.
+  background call. Where the repo has a machine-wide gate lock
+  (`scripts/gate-lock.mjs`), the test command runs under it:
+  `node scripts/gate-lock.mjs run --label "verify test" -- pnpm test`, so it queues
+  behind the other worktrees' gates instead of running beside them.
 
 Record nothing else; the gate keeps its own record.
 

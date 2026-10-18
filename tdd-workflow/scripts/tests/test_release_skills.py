@@ -133,14 +133,28 @@ class LandQueueSkillsTest(unittest.TestCase):
 
     def test_the_generic_flows_drive_none_of_the_land_queue_repos_gate_scripts(self):
         # A repo whose main has the queue always takes the queue path, so a branch for its
-        # gate machinery in the generic flow is unreachable. (A repo's own `gate:checks`
-        # sweep is not that machinery: the generic flow prefers it, M5 below.)
+        # gate record and selection in the generic flow is unreachable. (A repo's own
+        # `gate:checks` sweep is not that machinery: the generic flow prefers it, M5 below.)
+        # A machine-wide gate lock is not either: a repo without a queue may have one, and
+        # every Endoxia branch has one between this plugin's release and the queue landing
+        # on main, so the generic flow runs its heavy commands under it.
         generic = read(os.path.join(ROOT, "skills", "ship", "generic.md"))
         quick = section(skill("quickship"), "## Land queue `none`")
         for text, name in ((generic, "ship/generic.md"), (quick, "quickship")):
-            for gone in ("gate-record", "gate-lock", "run-checks-parallel", "TURBO_SCM_BASE", "ship:gate --"):
+            for gone in ("gate-record", "run-checks-parallel", "TURBO_SCM_BASE", "ship:gate --"):
                 self.assertNotIn(gone, text, f"{name} names {gone}")
         self.assertIn("${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md", quick, "quickship runs the same gate")
+
+    def test_heavy_commands_without_a_queue_run_under_the_repos_machine_lock(self):
+        # Two heavy gates side by side turned timing-sensitive tests red (Endoxia slice 806,
+        # K = 1). Without ship:gate the skills run the repo's own commands, and where the
+        # repo has a machine-wide lock the heavy ones queue on it instead of contending.
+        lock = 'node scripts/gate-lock.mjs run --label "'
+        generic = read(os.path.join(ROOT, "skills", "ship", "generic.md"))
+        self.assertIn(lock, generic)
+        for phase in (("feature", "04-verify.md"), ("refactor", "05-verify.md")):
+            text = read(os.path.join(ROOT, "skills", phase[0], "phases", phase[1]))
+            self.assertIn(lock + 'verify test" -- pnpm test', text, f"{phase[0]} VERIFY fallback")
 
     def test_how_main_lands_is_read_from_origin_main_not_the_branch(self):
         # B2: a branch cut before the queue landed has no ship:land of its own; reading

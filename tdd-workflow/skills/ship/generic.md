@@ -41,6 +41,14 @@ of tool wall-clock was `sleep`/poll loops** around a gate that exceeds the 10-mi
      has nothing to rewrite and the commit is the tree you checked.
    - `pnpm test`, then `pnpm build`: each with `run_in_background: true`, then wait
      for the notification.
+   - **The repo has a machine-wide gate lock** (`scripts/gate-lock.mjs`): run
+     `test`, `build` and step 5's sweep under it, as
+     `node scripts/gate-lock.mjs run --label "<what>" -- pnpm test`. Gates in other
+     worktrees on this machine take the same lock, so heavy runs queue instead of
+     contending (two side by side turned timing-sensitive tests red in Endoxia).
+     The lock waits visibly, names its holder and gives control back at its
+     deadline with exit 75: run it once more, then report and STOP. Lint, typecheck
+     and the format check stay outside it.
 
    STOP on failure. A task runner that replays a cached pass (Turborepo's
    `FULL TURBO`) re-proves nothing after a failure: run it again with its cache off
