@@ -65,10 +65,12 @@ def main():
                 "\n"
                 "Gate (repos with pnpm ship:gate): proportional to the change, once per tree.\n"
                 "VERIFY runs it; /ship, pre-push and the land queue reuse its record for the\n"
-                "identical tree. Gates in parallel worktrees run side by side. The land queue\n"
-                "(pnpm ship:land) tests the merged result once and lands in order, so main\n"
-                "moving never means a re-gate. Never sleep-poll a long command --\n"
-                "run_in_background and wait for the completion notification."
+                "identical tree judged against the same origin/main. A gate with heavy work\n"
+                "waits for the machine's slot (one by default: such gates queue FIFO); one\n"
+                "with nothing heavy takes no slot. The land queue (pnpm ship:land) tests the\n"
+                "merged result once and lands in order, so a branch never merges main to be\n"
+                "re-tested. Never sleep-poll a long command -- run_in_background and wait for\n"
+                "the completion notification."
             )
         }
     }

@@ -110,7 +110,11 @@ backgrounded gate notifies on completion. Polling was 46% of measured tool wall-
 - `temporal-checker` → READY | NEEDS_ATTENTION | NEEDS_WORK | NO_OP
 - the gate → its exit: `0` pass; `1` fail (it names what failed); `2` refused — the
   environment, not the code: do what its message says and run it again; `75` no slot
-  came free before its deadline: run it again
+  came free before its deadline: run it again; `143`, or a notice that it was stopped
+  at its time limit: the Bash ceiling stopped it and it judged nothing. Its wait for a
+  slot counts against that ceiling (a gate with heavy work queues for the machine's
+  one slot by default), so a gate queued behind others can be stopped although its
+  own run fits: run it again. A second stop is BLOCKED: surface it
 
 ## Step 5 — aggregate
 

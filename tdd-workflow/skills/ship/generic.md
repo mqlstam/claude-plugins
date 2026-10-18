@@ -1,7 +1,8 @@
 # Ship: the flow for a repo without a land queue
 
-For a repository whose `package.json` has no `ship:gate` and `ship:land`. Steps 1
-and 2 of `SKILL.md` have run; "After it lands" there follows the merge below.
+For a repository whose `main` has no land queue (the `Land queue` line said `none`:
+`origin/main`'s `package.json` has no `ship:land`). Steps 1 and 2 of `SKILL.md`
+have run; "After it lands" there follows the merge below.
 
 ## How to run the gate (read this before step 3)
 
@@ -26,9 +27,10 @@ of tool wall-clock was `sleep`/poll loops** around a gate that exceeds the 10-mi
 
 ## Validation
 
-3. **Find the repo's own commands.** `jq -r '.scripts | keys[]' package.json` lists
-   them. The gate is the ones the repo has of `lint`, `typecheck`, `format:check`,
-   `test` and `build`, each its own plain command through the repo's package
+3. **Find the repo's own commands.** `jq .scripts package.json` lists them with what
+   each runs (step 5 reads both). The gate is the ones the repo has of `lint`,
+   `typecheck`, `format:check`, `test` and `build`, each its own plain command
+   through the repo's package
    manager: `pnpm <script>`, or `npm run <script>` where the repo has a
    `package-lock.json`. Print the ones it lacks: a command the repo does not have is
    skipped out loud, never silently.
@@ -44,11 +46,32 @@ of tool wall-clock was `sleep`/poll loops** around a gate that exceeds the 10-mi
    `FULL TURBO`) re-proves nothing after a failure: run it again with its cache off
    (`--force`).
 
-5. **Project invariants.** Every other script in that list whose name starts with
-   `check:` or `env:`, except the `:update` variants, each as its own plain command
-   (`pnpm check:markers`, `pnpm env:drift`, ...). An updater OVERWRITES the
-   committed baseline with whatever the tree measures, so it cannot fail; running
-   one here reports green while redefining the target.
+5. **Project invariants: the assertions, never the writers.**
+   - **The repo has its own sweep** (`gate:checks` in that list) → `pnpm gate:checks`
+     with `run_in_background: true`, and nothing else for this step. The repo knows
+     what a name cannot say: which of its scripts write, which run others, and which
+     need a build first (Endoxia's skips `env:sync`, runs the links of
+     `check:contracts` instead of the aggregate, and refuses a missing build).
+   - **Otherwise** every other script in that list whose name starts with `check:`
+     or `env:`, each as its own plain command (`pnpm check:markers`,
+     `pnpm env:drift`, ...), except these, each printed with its reason:
+     - **a writer**: a name with a part that is `update`, `sync`, `fix` or `write`
+       (parts split at `:`, `-` and `_`: `check:budget:update`, `env:sync`,
+       `check:fix-imports`), or a command that passes `--write`, `--fix` or an
+       `--update…` flag, or sets an `UPDATE_…` variable. A writer rewrites a
+       committed file to match the tree: it cannot fail, so running it reports
+       green while redefining the target, and the commit then carries what it
+       rewrote (Endoxia's `env:sync` once deleted 22 keys from `.env.example` on a
+       /ship).
+     - **an aggregate**: a script whose command runs another script of this set
+       (`pnpm check:a && pnpm check:b`, `npm run check:x`, `run-s`, `npm-run-all`).
+       Its members run on their own, so it would only run them twice.
+
+   Why the name and the command, not a list: they are where a repository says what
+   a script does, and a list in this plugin would be one repository's names. An
+   aggregate that hides its members inside a script file is visible to neither; it
+   costs time, never a wrong verdict. An assertion the rule wrongly drops is in the
+   printed list, never silent.
 
    If an assertion legitimately needs a new baseline, update it DELIBERATELY as part
    of the change, ideally by hand-editing only the entries your diff moved, and say

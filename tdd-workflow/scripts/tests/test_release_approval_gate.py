@@ -23,12 +23,19 @@ ACTIONS = {
 }
 
 
+# The skills that land only through a land queue where main has one (`land-queue: only`).
+QUEUE_ONLY = {"ship", "quickship", "merge"}
+
+
 class FakeResolver(gate.SkillResolver):
     def __init__(self):
         super().__init__("/repo")
 
     def actions(self, name):
         return ACTIONS.get(gate.bare(name), ())
+
+    def land_queue_only(self, name):
+        return gate.bare(name) in QUEUE_ONLY
 
 
 def on_branch(name):
@@ -133,14 +140,19 @@ def no_github(run_id, _target_dir, _slug):
     raise AssertionError(f"GitHub asked about run {run_id} for a command that needs no lookup")
 
 
-def bash_decision(t, command, branch="feature", run_info=no_github, **payload):
+def no_queue(_d):
+    return False
+
+
+def bash_decision(t, command, branch="feature", run_info=no_github, queue_of=no_queue,
+                  scope=gate.GUARD_ALL, **payload):
     path = t.write()
     try:
         return gate.decide_bash(
             {"tool_name": "Bash", "tool_input": {"command": command}, "transcript_path": path,
              "tool_use_id": "toolu_now", "cwd": "/repo", **payload},
             FakeResolver(), sleep=no_sleep, branch_of=on_branch(branch),
-            scope=gate.GUARD_ALL, history_scope=gate.GUARD_ALL, run_info=run_info)
+            scope=scope, history_scope=gate.GUARD_ALL, run_info=run_info, queue_of=queue_of)
     finally:
         os.unlink(path)
 
@@ -822,7 +834,173 @@ class ForegroundLandTest(unittest.TestCase):
         self.assertIn("deploy-tag", bash_decision(t, "git push origin deploy-20261018-120001"))
 
 
+class PnpmCommandNotFoundTest(unittest.TestCase):
+    """`pnpm ship:land` where the checkout has no such script exits 254 (pnpm's
+    `Command "ship:land" not found`): the land never started, so nothing was used."""
+
+    def test_through_pnpm_254_is_not_charged(self):
+        for command in (LAND, "pnpm exec node scripts/ship-land.mjs land --pr 1361",
+                        "env FORCE_COLOR=0 pnpm ship:land land --pr 1361"):
+            t = Transcript().typed("claude-tdd-workflow:ship")
+            tid = t.bash(command, background=True)
+            t.notify(tid, "failed", 254)
+            self.assertIsNone(bash_decision(t, LAND), f"background: {command}")
+            t = Transcript().typed("claude-tdd-workflow:ship")
+            t.bash(command, error=True, output="Exit code 254\n ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL")
+            self.assertIsNone(bash_decision(t, LAND), f"foreground: {command}")
+
+    def test_run_directly_254_is_charged(self):
+        for command in ("node scripts/ship-land.mjs land --pr 1361", "./scripts/ship-land.mjs land --pr 1361"):
+            t = Transcript().typed("claude-tdd-workflow:ship")
+            tid = t.bash(command, background=True)
+            t.notify(tid, "failed", 254)
+            self.assertIsNotNone(bash_decision(t, LAND), command)
+
+    def test_details_carry_the_exits(self):
+        details = {}
+        gate.classify(LAND, "/repo", branch_of=on_branch("feature"), details=details)
+        self.assertEqual(details["land_not_landed"], frozenset({1, 3, 4, 6, 254}))
+        details = {}
+        gate.classify("node scripts/ship-land.mjs land --pr 1", "/repo", branch_of=on_branch("feature"),
+                      details=details)
+        self.assertEqual(details["land_not_landed"], frozenset({1, 3, 4, 6}))
+
+    def test_a_land_beside_a_direct_merge_is_not_refunded_by_its_exit(self):
+        t = Transcript().typed("approve", "ship hotfix")
+        tid = t.bash("gh pr merge 7 --merge && " + LAND, background=True)
+        t.notify(tid, "failed", 3)
+        # The one merge activation that covered it was used: what is left is one approval.
+        t.bash(LAND)
+        self.assertIsNotNone(bash_decision(t, "gh pr merge 8 --merge"))
+
+
+def queue_on_main(_d):
+    return True
+
+
+def queue_unreadable(_d):
+    return None
+
+
+def ask_nobody(d):
+    raise AssertionError(f"the queue of {d} was read for a command no queue-only skill alone covers")
+
+
+class LandQueueLockTest(unittest.TestCase):
+    """B2: where main lands through the queue (origin/main's package.json has
+    ship:land), /ship, /merge and /quickship cover the land and nothing else onto main:
+    a branch cut before the queue landed would otherwise merge around it."""
+
+    BARE = ("gh pr merge 12 --squash --match-head-commit abc",
+            "gh api -X PUT repos/:owner/:repo/pulls/12/merge",
+            "cd /repo && gh pr merge 12 --squash")
+
+    def test_the_ship_skills_cover_no_bare_merge_where_main_has_a_queue(self):
+        for skill in ("claude-tdd-workflow:ship", "claude-tdd-workflow:merge", "claude-tdd-workflow:quickship"):
+            for command in self.BARE:
+                reason = bash_decision(Transcript().typed(skill), command, queue_of=queue_on_main)
+                self.assertIn("land queue", reason, f"{skill}: {command}")
+                self.assertIn("git merge origin/main", reason)
+                self.assertIn("Nothing was used", reason)
+            self.assertIsNone(bash_decision(Transcript().typed(skill), LAND, queue_of=queue_on_main), skill)
+
+    def test_nor_a_push_to_main(self):
+        t = Transcript().typed("claude-tdd-workflow:quickship")
+        for command in ("git push origin main", "git push origin HEAD:refs/heads/main", "git push --all origin",
+                        "gh api -X DELETE repos/:owner/:repo/git/refs/heads/main"):
+            self.assertIn("land queue", bash_decision(t, command, queue_of=queue_on_main), command)
+        self.assertIn("land queue", bash_decision(t, "git push", branch="main", queue_of=queue_on_main))
+
+    def test_an_approval_ahead_is_held_the_same_way(self):
+        for name in ("ship", "merge", "quickship"):
+            t = Transcript().typed("approve", name)
+            self.assertIn("land queue", bash_decision(t, "gh pr merge 12 --squash", queue_of=queue_on_main), name)
+            self.assertIsNone(bash_decision(t, LAND, queue_of=queue_on_main), name)
+
+    def test_without_a_queue_on_main_the_generic_flow_still_merges(self):
+        t = Transcript().typed("claude-tdd-workflow:ship")
+        self.assertIsNone(bash_decision(t, "gh pr merge 12 --squash"))
+        t = Transcript().typed("claude-tdd-workflow:quickship")
+        self.assertIsNone(bash_decision(t, "git push origin main"))
+
+    def test_an_unreadable_main_is_held_for_the_ship_skills(self):
+        reason = bash_decision(Transcript().typed("claude-tdd-workflow:ship"), "gh pr merge 12 --squash",
+                               queue_of=queue_unreadable)
+        self.assertIn("cannot be read", reason)
+
+    def test_a_merge_naming_another_repository_than_the_checkout_is_held(self):
+        def must_not_read(d):
+            raise AssertionError(f"read {d}, which is not a checkout of the named repository")
+
+        reason = bash_decision(Transcript().typed("claude-tdd-workflow:ship"),
+                               "gh pr merge 3 --squash -R EndoxiaBV/Endoxia", cwd="/work/eabos",
+                               scope=scope(), queue_of=must_not_read)
+        self.assertIn("cannot be read", reason)
+        self.assertIn("EndoxiaBV/Endoxia", reason)
+        reason = bash_decision(Transcript().typed("claude-tdd-workflow:ship"),
+                               "gh api -X PUT repos/EndoxiaBV/Endoxia/pulls/3/merge", cwd="/work/eabos",
+                               scope=scope(), queue_of=must_not_read)
+        self.assertIn("cannot be read", reason)
+        # Named from its own checkout, the queue is read there.
+        self.assertIsNone(bash_decision(Transcript().typed("claude-tdd-workflow:ship"),
+                                        "gh pr merge 3 --squash -R EndoxiaBV/Endoxia", cwd="/work/endoxia",
+                                        scope=scope(), queue_of=no_queue))
+
+    def test_a_skill_that_may_go_around_the_queue_keeps_its_merge(self):
+        # Endoxia's /hotfix merges back with a merge commit, around the squashing queue.
+        t = Transcript().typed("claude-tdd-workflow:hotfix")
+        self.assertIsNone(bash_decision(t, "gh pr merge 1400 --merge", queue_of=ask_nobody))
+        t = Transcript().typed("approve", "hotfix")
+        self.assertIsNone(bash_decision(t, "gh pr merge 1400 --merge", queue_of=ask_nobody))
+
+    def test_the_queue_is_read_only_when_a_queue_only_skill_alone_covers_it(self):
+        self.assertIn("plain words", bash_decision(Transcript().prose("merge"), "gh pr merge 1",
+                                                   queue_of=ask_nobody))
+        t = Transcript().typed("claude-tdd-workflow:ship")
+        self.assertIsNone(bash_decision(t, LAND, queue_of=ask_nobody))
+
+    def test_a_refused_bare_merge_uses_nothing(self):
+        t = Transcript().typed("claude-tdd-workflow:ship")
+        t.bash("gh pr merge 12 --squash", error=True, output="PreToolUse:Bash hook error: Refused ...")
+        self.assertIsNone(bash_decision(t, LAND, queue_of=queue_on_main))
+
+    def test_a_land_uses_the_queue_only_skill_and_leaves_the_merge_back(self):
+        t = Transcript().typed("claude-tdd-workflow:hotfix").typed("claude-tdd-workflow:ship")
+        t.bash(LAND)
+        self.assertIsNone(bash_decision(t, "gh pr merge 1400 --merge", queue_of=queue_on_main))
+        t = Transcript().typed("claude-tdd-workflow:hotfix").typed("claude-tdd-workflow:ship")
+        t.bash("gh pr merge 1400 --merge")
+        self.assertIsNone(bash_decision(t, LAND, queue_of=queue_on_main))
+        t.bash(LAND)
+        self.assertIsNotNone(bash_decision(t, LAND, queue_of=queue_on_main))
+
+
 class FrontmatterTest(unittest.TestCase):
+    def test_reads_land_queue_only(self):
+        fd, path = tempfile.mkstemp(suffix=".md")
+        with os.fdopen(fd, "w") as fh:
+            fh.write("---\nname: ship\nrelease-actions: merge\nland-queue: only\n---\n# body\n")
+        try:
+            self.assertTrue(gate.read_land_queue_only(path))
+        finally:
+            os.unlink(path)
+        fd, path = tempfile.mkstemp(suffix=".md")
+        with os.fdopen(fd, "w") as fh:
+            fh.write("---\nname: hotfix\nrelease-actions: dispatch, merge\n---\nland-queue: only\n")
+        try:
+            self.assertFalse(gate.read_land_queue_only(path), "only the frontmatter counts")
+        finally:
+            os.unlink(path)
+
+    def test_shipped_skills_say_which_land_only_through_the_queue(self):
+        root = os.path.dirname(os.path.dirname(HERE))
+        for skill, expected in (("ship", True), ("merge", True), ("quickship", True), ("deploy", False)):
+            path = os.path.join(root, "skills", skill, "SKILL.md")
+            self.assertEqual(gate.read_land_queue_only(path), expected, skill)
+        resolver = gate.SkillResolver("/nonexistent")
+        self.assertTrue(resolver.land_queue_only("claude-tdd-workflow:ship"))
+        self.assertFalse(resolver.land_queue_only("claude-tdd-workflow:deploy"))
+
     def test_reads_release_actions(self):
         fd, path = tempfile.mkstemp(suffix=".md")
         with os.fdopen(fd, "w") as fh:

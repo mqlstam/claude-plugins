@@ -17,7 +17,11 @@ What it allows:
   Skill tool. Its release action (a merge, or a land through the queue; a push to
   main; a deploy tag; a workflow dispatch) is then allowed once. A failed one does
   not use it, except a land that may still have merged: only exits 1, 3, 4 and 6
-  say its PR did not land. A command run in the background is judged by how it ended.
+  say its PR did not land (and pnpm's 254, command not found, that it never
+  started). A command run in the background is judged by how it ended.
+- Where `main` lands through a land queue, /ship, /merge and /quickship cover the
+  queue's land only: never a bare PR merge, a merge through the API or a push to
+  main, however they were approved.
 - A release that ran may re-run the failed jobs of the run it started once,
   `gh run rerun <id> --failed`, without a new approval (a deploy whose run failed
   on a transient error, say). Any other re-run needs an approval of a skill that

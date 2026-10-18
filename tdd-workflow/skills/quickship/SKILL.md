@@ -2,8 +2,9 @@
 name: quickship
 description: Validate and push directly to main without a PR; where the repo lands through a queue, it is /ship. Runs when the user types /quickship, or after /approve quickship (one run).
 release-actions: push-main, merge
+land-queue: only
 argument-hint: "[commit message]"
-allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *), Bash(jq *)
+allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/land_queue.py *)
 ---
 
 # Quick Ship
@@ -15,23 +16,34 @@ allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *),
 - Diff stats: !`git diff --stat HEAD`
 - Worktree: !`git rev-parse --show-toplevel`
 - Primary worktree: !`git worktree list --porcelain | head -2 | tail -1 | awk '{print $2}'`
-- Land queue: !`jq -r 'if (.scripts // {} | has("ship:gate") and has("ship:land")) then "yes" else "no" end' package.json 2>/dev/null || echo no`
+- Land queue: !`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/land_queue.py --fetch`
 
-## Land queue `yes`: /quickship is /ship
+How `main` lands decides the flow, not this checkout: the `Land queue` line fetched
+`origin main` and read `origin/main`'s `package.json`, because a checkout older than
+the queue has no `ship:land` of its own.
 
-Where the repo lands through a queue (`package.json` has `ship:gate` and
-`ship:land`, Endoxia since slice 803), the queue is the only way onto `main`:
-nothing is pushed to `main` directly, and a PR is what the queue lands. So:
+- `queue` or `merge-main-first`, on `main` → STOP: "Here the land queue is the only
+  way onto main: run /ship from a worktree branch."
+- `merge-main-first` on a branch → STOP: "main lands through the queue now;
+  `git merge origin/main` first, then /ship."
+- `queue` on a branch → "Land queue `queue`" below.
+- `unknown: …` → STOP and report the line: without knowing how main lands, nothing
+  is pushed.
+- `none` → "Land queue `none`" below.
 
-- On `main` (no branch to land) → STOP: "Here the land queue is the only way onto
-  main: run /ship from a worktree branch."
-- Otherwise read `${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md` and follow it from
-  its Context (run those commands yourself), with `$ARGUMENTS` as the commit
-  subject. This /quickship's approval covers its land.
+## Land queue `queue`: /quickship is /ship
+
+Where `main` lands through a queue (Endoxia since slice 803), the queue is the only
+way onto `main`: nothing is pushed to `main` directly, and a PR is what the queue
+lands; the release gate refuses a push to main or a bare merge under this skill
+there. So read `${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md` and follow it from its
+Context (run those commands yourself: the plugin root its paths start from is
+`${CLAUDE_PLUGIN_ROOT}`, and its own skill directory `${CLAUDE_PLUGIN_ROOT}/skills/ship`),
+with `$ARGUMENTS` as the commit subject. This /quickship's approval covers its land.
 
 Stop reading here. Everything below is for a repo without a land queue.
 
-## Land queue `no`: straight to main
+## Land queue `none`: straight to main
 
 Pushes straight to main. Skips the PR + auto-merge dance that `/ship` runs.
 Use only when CI is disabled, branch protection is unconfigured, and the

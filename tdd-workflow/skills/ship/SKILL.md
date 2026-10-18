@@ -2,8 +2,9 @@
 name: ship
 description: Commit, gate the change, push, open the PR and land it on main. Runs when the user types /ship, or when Claude invokes it after the user typed /approve ship (one run).
 release-actions: merge
+land-queue: only
 argument-hint: "[PR title]"
-allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py *)
+allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/land_queue.py *)
 ---
 
 # Ship
@@ -14,7 +15,7 @@ allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node
 - Status: !`git status --short`
 - Diff stats: !`git diff --stat HEAD`
 - Recent commits on this branch: !`git log --oneline -5`
-- Land queue: !`jq -r 'if (.scripts // {} | has("ship:gate") and has("ship:land")) then "yes" else "no" end' package.json 2>/dev/null || echo no`
+- Land queue: !`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/land_queue.py --fetch`
 
 Every command below is ONE plain command with its values written out: no
 variables, no `$(...)`, git as its own command, no pipe on a release command (the
@@ -24,6 +25,21 @@ act on its completion notification, never `sleep` or poll.
 
 ## Both flows start here
 
+**How `main` lands decides the flow, not this branch.** The `Land queue` line fetched
+`origin main` and read `origin/main`'s `package.json`: a branch cut before the queue
+landed has no `ship:land` of its own, and reading the branch's file would send it
+around the queue with a bare merge.
+
+- `queue` → steps 1 and 2, then the land-queue steps below.
+- `none` → steps 1 and 2, then the generic flow. That includes the branch that brings
+  the queue: until it is on `main`, other sessions still merge the old way, and a
+  queue that other merges go around cannot promise main is the tree it tested.
+- `merge-main-first` → STOP: "main lands through the queue now; `git merge
+  origin/main` first, then /ship." (VERIFY then runs again on the merged tree; step
+  2 asks for it.)
+- `unknown: …` → STOP and report the line: without knowing how main lands, nothing
+  merges.
+
 1. **Something to ship.** Status empty and `git log --oneline origin/main..HEAD`
    empty → STOP: nothing to ship.
 2. **VERIFY ran on this diff.** `jq -r .headSha .claude/.verify-state.json` must
@@ -31,18 +47,22 @@ act on its completion notification, never `sleep` or poll.
    "VERIFY has not run on this diff. Complete it (re-enter /feature or /refactor)
    before /ship."
 
-**Land queue `no`:** read `${CLAUDE_SKILL_DIR}/generic.md` and follow it, then
-"After it lands" below. **Land queue `yes`:** the steps below. The queue is the
-only way onto `main` here: nothing merges a PR or pushes `main` around it.
+**`none`:** read `${CLAUDE_SKILL_DIR}/generic.md` and follow it, then "After it
+lands" below. **`queue`:** the steps below. The queue is the only way onto `main`
+here: nothing merges a PR or pushes `main` around it, and the release gate refuses
+a bare PR merge, a merge through the API or a push to main under this skill.
 
 ## Land queue: the scripts own the mechanics, you own the judgment
 
-`pnpm ship:gate` picks what to run from the change, reuses the record of a tree
-already proven (VERIFY's run, usually), and runs beside other worktrees' gates.
-`pnpm ship:land` hands the PR to one integrator that tests the merged result once
-and squash-merges in queue order. Neither needs main watched, merged in or
-re-gated because it moved. Yours: the commit message, what the floor cannot see,
-the PR text, and reading the outcome.
+`pnpm ship:gate` picks what to run from the change and reuses the record of a tree
+already proven against the same `origin/main` (VERIFY's run, usually; when main
+moved since, it runs again, proportional and on warm caches). A gate with heavy
+work waits for a slot of the machine: the measured default is one slot, so such
+gates run one at a time in ticket order, and one with nothing heavy to run takes no
+slot. `pnpm ship:land` hands the PR to one integrator that tests the merged result
+once and squash-merges in queue order. Neither needs main watched or merged in.
+Yours: the commit message, what the floor cannot see, the PR text, and reading the
+outcome.
 
 3. **Commit.** Stage what belongs to the change (`git add <paths>`; never secrets or
    scratch files) and commit in conventional form, `type(scope): what changes for
@@ -80,6 +100,10 @@ the PR text, and reading the outcome.
      build). Do what its message says and run it again; never work around it.
    - `75` → no slot came free before its deadline: run it again once; a second
      `75` → report it and STOP.
+   - `143`, or a notice that it was stopped at its time limit → the Bash ceiling
+     stopped it, and it judged nothing. Its wait for a slot counts against that
+     ceiling, so a gate queued behind others can be stopped although its own run
+     fits: run it again once; a second stop → report it and STOP.
 
 5. **Push:** `git push -u origin <branch>`, never `--no-verify`. `pre-push` reuses
    the gate's record for this commit's tree; if it runs the gate itself, the tree
@@ -119,9 +143,15 @@ the PR text, and reading the outcome.
      (after that batch, for the second); the PR was closed, retargeted, or GitHub
      refused the merge → report the reason and STOP.
    - `6` main is red on its own: what failed on the merged result also fails on
-     `origin/main` alone, so no PR was blamed and none of the batch merged. Report
-     the evidence it printed (the failing steps and tests on main) and STOP: land
-     again once main is green. Fixing main is its own change, through the queue.
+     `origin/main` alone, so no PR was blamed and none of the batch merged. Main's
+     red clears only when a batch lands whose gate passes what main fails, so
+     waiting does not clear it. Read the evidence it printed (the failing steps and
+     tests on main, with their logs). When it names a timing-sensitive or flaky
+     failure (a timeout, a test that passes when run again), run step 7 again: exit
+     6 did not use this approval, and that batch's gate runs main's failing steps
+     again. Otherwise main is broken: report the evidence and STOP. The fix goes
+     through the queue as its own PR (landing it is what clears main), and this PR
+     lands after it.
    - `2` the land could not decide (it says which: an environment problem, a
      merge GitHub accepted but did not report merged in time, or a bisect whose
      reds disagreed) → run step 7 once more; it re-attaches to the same entry. A
@@ -136,8 +166,9 @@ the PR text, and reading the outcome.
      queued (`pnpm ship:land status`) and that `/merge <PR>` waits for it again.
    - anything else: report its output and STOP.
 
-   A land that exited `1`, `3`, `4` or `6` landed nothing, so it did not use this
-   /ship's approval: steps 4-8 again are this same run. Every other exit used it.
+   A land that exited `1`, `3`, `4` or `6` landed nothing, and pnpm's `254`
+   (command not found) never started one, so neither used this /ship's approval:
+   steps 4-8 again are this same run. Every other exit used it.
 
 ## After it lands
 

@@ -35,7 +35,22 @@ Two layers, one script:
              else did, and one still running holds the approval. A land, in
              the foreground or the background, is released unless it exited
              1, 3, 4 or 6, the exits after which its PR did not and will not
-             land from that entry (2 and 75 promise nothing, 0 and 5 merged).
+             land from that entry (2 and 75 promise nothing, 0 and 5 merged),
+             or 254 through pnpm, which is pnpm's `Command "ship:land" not
+             found`: the land never started.
+             Where the target repository lands on main through a land queue
+             (its origin/main package.json has a `ship:land` script; the one
+             definition is land_queue.py), a skill whose frontmatter says
+             `land-queue: only` (/ship, /merge, /quickship) covers the queue's
+             land and nothing else onto main: no `gh pr merge`, no merge
+             through the API, no push to main, however active it is. A branch
+             cut before the queue landed has no `ship:land` of its own, took
+             the generic flow and merged around the queue; this is the floor
+             under the skills' own check. A skill without the key keeps its
+             bare merge (Endoxia's /hotfix, whose merge-back must keep main's
+             ancestry and so goes around the queue by design). The queue is
+             read from the local origin/main ref, never fetched: the skills
+             fetch before they decide, and so does every flow that merges.
              A release that ran also earns ONE `gh run rerun <id> --failed` of
              the run it started, under the same approval: a deploy tag pushed by
              its literal name (GitHub is asked whether run <id> is that tag's
@@ -85,6 +100,7 @@ from collections import Counter
 # The hook runs the script by path; tests load it with importlib under `python3 -I`,
 # which does not put the script's directory on sys.path. Name it explicitly.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from land_queue import on_main as land_queue_on_main  # noqa: E402
 from shell_text import mask_inert, simple_commands  # noqa: E402
 
 ACTION_CLASSES = ("merge", "push-main", "deploy-tag", "dispatch")
@@ -165,32 +181,46 @@ def _current_branch(cwd: str) -> str | None:
     return out.stdout.strip() or None
 
 
-def read_release_actions(skill_md: str) -> tuple[str, ...]:
+def _frontmatter_value(skill_md: str, key: str) -> str | None:
     try:
         with open(skill_md) as fh:
             text = fh.read()
     except OSError:
-        return ()
+        return None
     if not text.startswith("---"):
-        return ()
+        return None
     end = text.find("\n---", 3)
     front = text[3:end if end != -1 else len(text)]
-    m = re.search(r"^release-actions:[ \t]*(.+)$", front, re.M)
-    if not m:
+    m = re.search(rf"^{re.escape(key)}:[ \t]*(.+)$", front, re.M)
+    return m.group(1).strip() if m else None
+
+
+def read_release_actions(skill_md: str) -> tuple[str, ...]:
+    raw = _frontmatter_value(skill_md, "release-actions")
+    if not raw:
         return ()
-    raw = m.group(1).strip().strip("[]")
+    raw = raw.strip("[]")
     return tuple(sorted({
         v.strip().strip("'\"") for v in re.split(r"[,\s]+", raw) if v.strip().strip("'\"")
     }))
 
 
+def read_land_queue_only(skill_md: str) -> bool:
+    """`land-queue: only`: where the repository lands on main through a land queue, the
+    skill's merge is the queue's land and nothing else (see the module docstring)."""
+    return (_frontmatter_value(skill_md, "land-queue") or "").strip("'\"") == "only"
+
+
 class SkillResolver:
     """Maps a skill name (as typed, or as the Skill tool receives it) to the
-    release actions its SKILL.md declares. Empty = not a release skill."""
+    release actions its SKILL.md declares (empty = not a release skill), and to
+    whether it lands only through a land queue where the repository has one."""
 
     def __init__(self, cwd: str):
         self.cwd = cwd
+        self._paths: dict[str, str | None] = {}
         self._cache: dict[str, tuple[str, ...]] = {}
+        self._queue_only: dict[str, bool] = {}
         self._plugin_roots: dict[str, str] | None = None
         self._project_roots: list[str] | None = None
 
@@ -220,16 +250,25 @@ class SkillResolver:
         paths += [os.path.join(r, "skills", name, "SKILL.md") for r in self.plugin_roots().values()]
         return paths
 
+    def skill_md(self, name: str) -> str | None:
+        key = name.strip().lstrip("/")
+        if key not in self._paths:
+            self._paths[key] = next((p for p in self.candidates(key) if os.path.isfile(p)), None)
+        return self._paths[key]
+
     def actions(self, name: str) -> tuple[str, ...]:
         key = name.strip().lstrip("/")
         if key not in self._cache:
-            found: tuple[str, ...] = ()
-            for path in self.candidates(key):
-                if os.path.isfile(path):
-                    found = read_release_actions(path)
-                    break
-            self._cache[key] = found
+            path = self.skill_md(key)
+            self._cache[key] = read_release_actions(path) if path else ()
         return self._cache[key]
+
+    def land_queue_only(self, name: str) -> bool:
+        key = name.strip().lstrip("/")
+        if key not in self._queue_only:
+            path = self.skill_md(key)
+            self._queue_only[key] = read_land_queue_only(path) if path else False
+        return self._queue_only[key]
 
 
 # --------------------------------------------------------------------------
@@ -429,6 +468,17 @@ SHIP_LAND_READ_ONLY = frozenset({"status", "help"})
 # of Endoxia's scripts/ship-land.mjs, slice 803 D4. Re-derive when it changes.
 SHIP_LAND_NOT_LANDED_EXITS = frozenset({1, 3, 4, 6})
 
+# pnpm's own exit when the command it was asked to run does not exist: `pnpm ship:land`
+# in a checkout whose package.json has no such script (a branch cut before the queue
+# landed) prints `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command "ship:land" not found` and
+# exits 254, and so does `pnpm exec` of a missing binary. The land never started. pnpm
+# passes a script's own exit through unchanged (probed with pnpm 10.6.5 on 2026-10-18:
+# a script's 3, 75 and 254 came back as 3, 75 and 254, a SIGTERM as 143), and the land's
+# contract has no 254, so through pnpm 254 can only be pnpm's. (`pnpm run ship:land`
+# says `Missing script` with exit 1, already a not-landed exit.) Only a land started
+# through pnpm earns it: run directly, 254 is nobody's contract and is charged.
+PNPM_COMMAND_NOT_FOUND_EXIT = 254
+
 _SHIP_LAND_HINT = re.compile(r"\bship[-:]land\b")
 _SHIP_LAND_SCRIPT = re.compile(r"ship-land\.m?js")
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
@@ -505,20 +555,30 @@ def _lands(args: list[str]) -> bool:
     return subcommand not in SHIP_LAND_READ_ONLY
 
 
-def _ship_lands(cmd: str, masked: str, cwd: str, scope: RepoScope) -> list[int]:
-    """Start offsets of the simple commands in `cmd` that land a PR through the queue,
-    in a guarded repository. Read on text whose comments and heredoc bodies are
-    blank but whose quotes stay, so `node "scripts/ship-land.mjs" land` is a land and
-    `echo "pnpm ship:land land"` is not."""
+def _not_landed_exits(toks: list[str]) -> frozenset[int]:
+    """The exits after which the land `toks` runs did not land its PR: the queue's
+    own, and pnpm's "command not found" when pnpm is what starts it."""
+    words = _command_words(toks)
+    if words and os.path.basename(words[0]) == "pnpm":
+        return SHIP_LAND_NOT_LANDED_EXITS | {PNPM_COMMAND_NOT_FOUND_EXIT}
+    return SHIP_LAND_NOT_LANDED_EXITS
+
+
+def _ship_lands(cmd: str, masked: str, cwd: str, scope: RepoScope) -> list[tuple[int, frozenset[int]]]:
+    """(start offset, not-landed exits) of each simple command in `cmd` that lands a PR
+    through the queue, in a guarded repository. Read on text whose comments and heredoc
+    bodies are blank but whose quotes stay, so `node "scripts/ship-land.mjs" land` is a
+    land and `echo "pnpm ship:land land"` is not."""
     if not _SHIP_LAND_HINT.search(cmd):
         return []
     quoted_kept = mask_inert(cmd, keep=lambda _c, region: region.kind in ("single", "double"))
-    starts = []
+    lands = []
     for start, end, _sep in simple_commands(masked):
         text = quoted_kept[start:end]
         if not _SHIP_LAND_HINT.search(text):
             continue
-        call = _ship_land_call(_tokens(text))
+        toks = _tokens(text)
+        call = _ship_land_call(toks)
         if call is None or not _lands(call[0]):
             continue
         _args, workdir, script = call
@@ -529,8 +589,8 @@ def _ship_lands(cmd: str, masked: str, cwd: str, scope: RepoScope) -> list[int]:
         if script and "/" in script:  # the repository the script belongs to: <repo>/scripts/ship-land.mjs
             dirs.append(os.path.normpath(os.path.join(target, os.path.expanduser(script), os.pardir, os.pardir)))
         if any(scope.guards(d) for d in dirs):
-            starts.append(start)
-    return starts
+            lands.append((start, _not_landed_exits(toks)))
+    return lands
 
 
 def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = GUARD_ALL,
@@ -539,11 +599,16 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
     whose own command sends its output into a pipe are added to it as well. When
     `details` is a dict, it receives what a rerun credit needs: `tags` (deploy tags
     pushed by their literal name) and `reruns` ((run id, target dir, -R slug) for
-    each `gh run rerun <id> --failed`), and `land` when the merge is a land."""
+    each `gh run rerun <id> --failed`); `direct` ((class, target dir, explicit slug)
+    for each merge or push onto main that is not the land queue's land, which a land
+    queue on that repository's main refuses to /ship, /merge and /quickship); and,
+    when the merge is a land, `land` and `land_not_landed` (the exits after which it
+    did not land)."""
     classes: set[str] = set()
     if details is not None:
         details.setdefault("tags", [])
         details.setdefault("reruns", [])
+        details.setdefault("direct", [])
     if not RELEASE_VERB_HINT.search(cmd):
         return classes
     masked = mask_inert(cmd)
@@ -552,15 +617,22 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
         if piped is not None and _stops_at_pipe(masked, m.start()):
             piped.add(cls)
 
-    def gh_guarded(m) -> bool:
+    def repo_flag(m) -> str | None:
         flag = _REPO_FLAG.search(_segment(cmd, m.start()))
-        return scope.guards(_target_dir(cmd, masked, m.start(), cwd),
-                            flag.group(1).strip("'\"") if flag else None)
+        return flag.group(1).strip("'\"") if flag else None
+
+    def gh_guarded(m) -> bool:
+        return scope.guards(_target_dir(cmd, masked, m.start(), cwd), repo_flag(m))
+
+    def direct(cls: str, target_dir: str, slug: str | None) -> None:
+        if details is not None:
+            details["direct"].append((cls, target_dir, slug))
 
     for m in _GH_PR_MERGE.finditer(masked):
         if gh_guarded(m) and not _asks_for_help(_segment(cmd, m.start())):
             classes.add("merge")
             note_pipe(m, "merge")
+            direct("merge", _target_dir(cmd, masked, m.start(), cwd), repo_flag(m))
     for m in _GH_WORKFLOW_RUN.finditer(masked):
         if gh_guarded(m) and not _asks_for_help(_segment(cmd, m.start())):
             classes.add("dispatch")
@@ -582,15 +654,19 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
     for m in _GH_API.finditer(masked):
         args = cmd[m.start(1):m.end(1)]
         api_slug = re.search(r"repos/([^/\s]+/[^/\s]+)/", args)
-        if api_slug and ":owner" not in api_slug.group(1):
-            guarded = scope.guards(cwd, api_slug.group(1))
+        explicit = api_slug.group(1) if api_slug and ":owner" not in api_slug.group(1) else None
+        if explicit:
+            guarded = scope.guards(cwd, explicit)
         else:
             guarded = gh_guarded(m)
+            explicit = repo_flag(m)
         if not guarded:
             continue
+        target = _target_dir(cmd, masked, m.start(), cwd)
         if re.search(r"pulls/[^/\s]+/merge\b|/merges\b", args):
             classes.add("merge")
             note_pipe(m, "merge")
+            direct("merge", target, explicit)
         if "dispatches" in args:
             classes.add("dispatch")
             note_pipe(m, "dispatch")
@@ -599,6 +675,7 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
                 r"(?:^|\s)(?:-X|--method)[ \t=]*(?:DELETE|PATCH)\b", args, re.I):
             classes.add("push-main")
             note_pipe(m, "push-main")
+            direct("push-main", target, explicit)
 
     for m in _GIT_PUSH.finditer(masked):
         git_opts = _tokens(cmd[m.start(1):m.end(1)])
@@ -653,11 +730,15 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
         classes |= mine
         for cls in mine:
             note_pipe(m, cls)
+        if "push-main" in mine:
+            direct("push-main", repo_dir, None)
 
-    for start in _ship_lands(cmd, masked, cwd, scope):
+    for start, not_landed in _ship_lands(cmd, masked, cwd, scope):
         classes.add("merge")
         if details is not None:
             details["land"] = True
+            # Two lands in one command: an exit refunds only what it means for both.
+            details["land_not_landed"] = details.get("land_not_landed", not_landed) & not_landed
         if piped is not None and _stops_at_pipe(masked, start):
             piped.add("merge")
     return classes
@@ -731,7 +812,10 @@ def background_released(effect: tuple, status: str, exit_code: int | None) -> bo
         return True
     _kind, classes, details = effect
     if details.get("land"):
-        return not (set(classes) == {"merge"} and exit_code in SHIP_LAND_NOT_LANDED_EXITS)
+        # Refunded only when the land is the command's one release: an exit is the land's
+        # verdict, not a `gh pr merge` or a deploy tag's beside it.
+        alone = set(classes) == {"merge"} and not details.get("direct")
+        return not (alone and exit_code in details.get("land_not_landed", SHIP_LAND_NOT_LANDED_EXITS))
     return False
 
 
@@ -773,13 +857,22 @@ def gh_run_info(run_id: str, target_dir: str, slug: str | None) -> dict | None:
         return None
 
 
+def _any_skill(_name: str) -> bool:
+    return True
+
+
 class Ledger:
-    def __init__(self, actions_of=lambda _name: (), run_info=gh_run_info):
+    def __init__(self, actions_of=lambda _name: (), run_info=gh_run_info,
+                 queue_only_of=lambda _name: False):
         self.approvals: Counter = Counter()  # bare skill name -> unused approvals
-        self.grants: Counter = Counter()  # action class -> unused activations
+        # (bare skill name, action class) -> unused activations. Kept per skill because
+        # one class can mean two things where main lands through a queue: /hotfix's
+        # merge goes around the queue, /ship's never does (`land-queue: only`).
+        self.grants: Counter = Counter()
         self.last_typed: str | None = None  # bare name of the last typed command
         self.last_approve_args: list[str] = []
         self._actions_of = actions_of
+        self._queue_only_of = queue_only_of
         # Runs a release of THIS session started, each re-runnable once with
         # `gh run rerun <id> --failed` under the approval that released it:
         # ("tags", frozenset of deploy tags pushed) or ("run", id a dispatch printed).
@@ -788,17 +881,31 @@ class Ledger:
         self._run_info = run_info
         self._info: dict[str, dict | None] = {}
 
-    def approval_covering(self, action: str) -> str | None:
+    def not_queue_only(self, name: str) -> bool:
+        return not self._queue_only_of(name)
+
+    def _granted(self, action: str, allow) -> list[str]:
+        return sorted(s for (s, a), k in self.grants.items() if a == action and k > 0 and allow(s))
+
+    def _approved(self, action: str, allow) -> list[str]:
+        return sorted(n for n, k in self.approvals.items()
+                      if k > 0 and action in self._actions_of(n) and allow(n))
+
+    def approval_covering(self, action: str, allow=_any_skill) -> str | None:
         """An unused approval of a skill whose declared actions include
         `action`. `/approve merge` thereby also covers one bare `gh pr merge`
         in a repo where the skill itself does not fit (a website repo, say)."""
-        for name in sorted(n for n, k in self.approvals.items() if k > 0):
-            if action in self._actions_of(name):
-                return name
-        return None
+        names = self._approved(action, allow)
+        return names[0] if names else None
 
-    def covers(self, action: str) -> bool:
-        return self.grants[action] > 0 or self.approval_covering(action) is not None
+    def covers(self, action: str, allow=_any_skill) -> bool:
+        """Whether an activation or an unused approval covers `action`; `allow` limits
+        which skills may (a land queue's main admits no queue-only skill's bare merge)."""
+        return bool(self._granted(action, allow)) or self.approval_covering(action, allow) is not None
+
+    def _grant(self, name: str, actions: tuple[str, ...]) -> None:
+        for action in actions:
+            self.grants[(name, action)] += 1
 
     def typed(self, name: str, args: str, actions: tuple[str, ...]) -> None:
         b = bare(name)
@@ -810,7 +917,7 @@ class Ledger:
                 self.approvals[n] += 1
             return
         if actions:
-            self.grants.update(actions)
+            self._grant(b, actions)
             if self.approvals[b] > 0:  # the user ran it themselves: approval used
                 self.approvals[b] -= 1
 
@@ -821,16 +928,33 @@ class Ledger:
         # which already granted them once.
         if self.approvals[b] > 0:
             self.approvals[b] -= 1
-            self.grants.update(actions)
+            self._grant(b, actions)
 
-    def release_ran(self, classes) -> None:
+    def _use_order(self, action: str, details: dict):
+        """The order in which a release of `action` uses the skills that cover it. A
+        direct merge or push onto main uses a skill that may go around a land queue
+        first (where main has a queue, only such a skill could have covered it); a land
+        uses a queue-only skill first, leaving the other for the merge it may still
+        have to do. Then by name."""
+        if action == "push-main" or (action == "merge" and details.get("direct")):
+            prefer = self.not_queue_only
+        elif action == "merge" and details.get("land"):
+            prefer = self._queue_only_of
+        else:
+            prefer = _any_skill
+        return lambda name: (not prefer(name), name)
+
+    def release_ran(self, classes, details: dict | None = None) -> None:
+        details = details or {}
         for c in sorted(classes):
-            if self.grants[c] > 0:
-                self.grants[c] -= 1
+            order = self._use_order(c, details)
+            granted = sorted(self._granted(c, _any_skill), key=order)
+            if granted:
+                self.grants[(granted[0], c)] -= 1
                 continue
-            name = self.approval_covering(c)
-            if name:
-                self.approvals[name] -= 1
+            approved = sorted(self._approved(c, _any_skill), key=order)
+            if approved:
+                self.approvals[approved[0]] -= 1
 
     def rerun_credit(self, run_id: str, target_dir: str, slug: str | None) -> bool | None:
         """True when `run_id` is a run a release of this session started and it has
@@ -858,7 +982,7 @@ class Ledger:
             if self.rerun_credit(run_id, target_dir, slug) is not True:
                 self.release_ran({"dispatch"})  # unknown is charged too: a refusal, never a release
             self.reruns_used.add(run_id)
-        self.release_ran(set(classes) - {"rerun"})
+        self.release_ran(set(classes) - {"rerun"}, details)
         if "deploy-tag" in classes and details.get("tags"):
             self.run_credits.append(("tags", frozenset(details["tags"])))
         if "dispatch" in classes and details.get("sole"):
@@ -869,7 +993,7 @@ class Ledger:
 def build_ledger(transcript_path: str, current_tool_use_id: str | None,
                  resolver: SkillResolver, scope: RepoScope | None = None,
                  run_info=gh_run_info) -> Ledger:
-    ledger = Ledger(resolver.actions, run_info)
+    ledger = Ledger(resolver.actions, run_info, resolver.land_queue_only)
     scope = scope or RepoScope.from_config(unknown_guarded=False)
     pending: dict[str, tuple] = {}
     # Release commands started with `run_in_background`, waiting for their notice.
@@ -1025,16 +1149,51 @@ def decide_skill(payload: dict, resolver: SkillResolver, read=build_ledger, slee
             f"are gated too. Say that you were blocked.")
 
 
+def land_queue_refusal(details: dict, ledger: Ledger, scope: RepoScope,
+                       queue_of=land_queue_on_main) -> str | None:
+    """Why a direct merge or push onto main is refused although a skill covers it: only
+    queue-only skills (`land-queue: only`) cover it, and the repository it targets lands
+    on main through a queue, or cannot be read to say it does not. None to allow."""
+    held: list[tuple[str, str, bool | None]] = []
+    for cls, target_dir, slug in details.get("direct", []):
+        if ledger.covers(cls, allow=ledger.not_queue_only):
+            continue
+        if slug and scope.dir_slug(target_dir) != slug.lower().removesuffix(".git"):
+            held.append((cls, slug, None))  # its main is not the one checked out here
+            continue
+        on_main = queue_of(target_dir)
+        if on_main is not False:
+            held.append((cls, target_dir, on_main))
+    if not held:
+        return None
+    what = ", ".join(sorted({cls for cls, _t, _q in held}))
+    where = ", ".join(sorted({target for _c, target, _q in held}))
+    if all(on_main is True for _c, _t, on_main in held):
+        return (f"Refused before running ({what}): {where} lands on main through its land queue "
+                f"(origin/main's package.json has a `ship:land` script), and there the queue is the "
+                f"only way onto main. /ship, /merge and /quickship cover `pnpm ship:land land --pr "
+                f"<n>`, never a `gh pr merge`, a merge through the GitHub API or a push to main, "
+                f"however they were approved. A branch whose own package.json has no `ship:land` was "
+                f"cut before the queue landed: `git fetch origin main`, then `git merge origin/main`, "
+                f"VERIFY on the merged tree, and /ship again, which lands it through the queue. "
+                f"Nothing was used.")
+    return (f"Refused before running ({what}): whether {where} lands on main through a land queue "
+            f"cannot be read here (no checkout of that repository whose origin/main package.json "
+            f"parses). /ship, /merge and /quickship never merge around a land queue, so without "
+            f"that answer they cover no `gh pr merge`, merge through the GitHub API or push to "
+            f"main. Run it in that repository's own checkout. Nothing was used.")
+
+
 def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
                 sleep=time.sleep, branch_of=_current_branch,
                 scope: RepoScope | None = None, history_scope: RepoScope | None = None,
-                run_info=gh_run_info) -> str | None:
+                run_info=gh_run_info, queue_of=land_queue_on_main) -> str | None:
     cmd = str((payload.get("tool_input") or {}).get("command") or "")
     piped: set[str] = set()
     details: dict = {}
+    scope = scope or RepoScope.from_config(unknown_guarded=True)
     classes = classify(cmd, payload.get("cwd") or os.getcwd(), branch_of=branch_of,
-                       scope=scope or RepoScope.from_config(unknown_guarded=True), piped=piped,
-                       details=details)
+                       scope=scope, piped=piped, details=details)
     if not classes:
         return None
     what = ", ".join(sorted(classes))
@@ -1060,7 +1219,7 @@ def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
         if any(not ledger.rerun_covered(*r) for r in details.get("reruns", [])):
             missing.append("rerun")
         if not missing:
-            return None
+            return land_queue_refusal(details, ledger, scope, queue_of)
         if attempt == 0:
             sleep(TRANSCRIPT_LAG_RETRY_S)
     rerun_note = ""

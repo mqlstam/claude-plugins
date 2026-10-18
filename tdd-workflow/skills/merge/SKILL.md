@@ -2,6 +2,7 @@
 name: merge
 description: Squash-merge a PR into main, through the land queue where the repo has one. Runs when the user types /merge, or after /approve merge (one run).
 release-actions: merge
+land-queue: only
 argument-hint: "[PR number or branch name]"
 ---
 
@@ -14,17 +15,28 @@ the worktree.
 
 ## Context (pre-computed)
 
-- Land queue: !`jq -r 'if (.scripts // {} | has("ship:land")) then "yes" else "no" end' package.json 2>/dev/null || echo no`
+- Land queue: !`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/land_queue.py --fetch`
 
 Every command below is one plain command with the values written out literally:
 no variables, no `$(...)`, no pipe on the merge (the release gate refuses a piped
 release, and a worktree session refuses commands it cannot read).
 
-## Land queue `yes`: the queue lands it
+How `main` lands decides the flow, not this checkout: the `Land queue` line fetched
+`origin main` and read `origin/main`'s `package.json`.
 
-Where the repo has `ship:land` (Endoxia since slice 803) the land queue is the only
-way onto `main`: nothing merges a PR around it. The queue's integrator gates the
-merged result once and squash-merges in order.
+- `queue` → "Land queue `queue`" below.
+- `merge-main-first` → STOP: "main lands through the queue now; this checkout
+  predates it: `git merge origin/main` first, then /merge."
+- `unknown: …` → STOP and report the line: without knowing how main lands, nothing
+  merges.
+- `none` → "Land queue `none`" below.
+
+## Land queue `queue`: the queue lands it
+
+Where `main` has `ship:land` (Endoxia since slice 803) the land queue is the only
+way onto `main`: nothing merges a PR around it, and the release gate refuses a
+bare PR merge or a merge through the API under this skill there. The queue's
+integrator gates the merged result once and squash-merges in order.
 
 1. **Identify the PR.** `$ARGUMENTS` is the PR number or branch, else the current
    branch: `gh pr view <PR-or-branch> --json number,state,headRefName`. `<PR>` is
@@ -45,8 +57,13 @@ merged result once and squash-merges in order.
    - `4` refused: superseded by a newer push, or a batch was landing the old head
      → run step 2 again (after that batch); PR closed, retargeted, or GitHub
      refused → report the reason.
-   - `6` main is red on its own; nothing of the batch merged: report the evidence
-     (what fails on `origin/main` alone); land again once main is green.
+   - `6` main is red on its own; nothing of the batch merged. Main's red clears only
+     when a batch lands whose gate passes what main fails, so waiting does not clear
+     it. Read the evidence (what fails on `origin/main` alone, with its logs). When
+     it names a timing-sensitive or flaky failure (a timeout, a test that passes
+     when run again), run step 2 again: exit 6 did not use this approval. Otherwise
+     report the evidence and STOP: the fix goes through the queue as its own PR, and
+     landing it is what clears main; this PR lands after it.
    - `5` merged, but main is not, or may not be, the tested tree (changed outside
      the queue, or the merges stopped part-way): STOP and tell the owner, quoting it.
    - `2` the land could not decide (environment, a merge not yet reported, a
@@ -58,14 +75,15 @@ merged result once and squash-merges in order.
    After `0`, delete the remote branch: `git push origin --delete <branch>` (a
    "remote ref does not exist" means the repository already did).
 
-   A land that exited `1`, `3`, `4` or `6` landed nothing and did not use this approval;
-   every other exit used it.
+   A land that exited `1`, `3`, `4` or `6` landed nothing, and pnpm's `254`
+   (command not found) never started one: neither used this approval; every other
+   exit used it.
 
 **Landing does NOT deploy.** Run `/deploy` when you want it released.
 
 Stop reading here. Everything below is for a repo without a land queue.
 
-## Land queue `no`: process
+## Land queue `none`: process
 
 1. **Identify the PR.** `$ARGUMENTS` is the PR number or branch, else the current
    branch: `gh pr view <PR-or-branch> --json number,state,headRefOid,headRefName`.

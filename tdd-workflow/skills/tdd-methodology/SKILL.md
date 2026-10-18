@@ -96,18 +96,25 @@ Reach for it before reaching for another grep-shaped gate.
 
 ## Gate economics (why /ship is fast after a green VERIFY)
 
-Where the repo has `ship:gate` and `ship:land` (Endoxia, slice 803):
+Where the repo's `main` lands through a queue (`ship:gate` and `ship:land`, Endoxia,
+slice 803):
 
 - **The gate is proportional to the change.** A deterministic floor picks what the
   change reaches (affected lint and typecheck, the checks whose inputs changed, the
   tests that import a changed file); the model only ADDS what no import reaches, with
   a reason.
 - **A result belongs to a tree, machine-wide.** VERIFY's run records the tree it
-  proved; `/ship`, `pre-push` and the land queue reuse it for that identical tree, in
-  any worktree.
-- **Gates run side by side** on a fixed number of slots, in ticket order.
+  proved, judged against the `origin/main` it saw; `/ship`, `pre-push` and the land
+  queue reuse it for that identical tree, in any worktree. When main moved since,
+  `/ship`'s gate runs again, proportional and on warm caches.
+- **Gates queue for the machine.** A gate with heavy work takes a slot, and the
+  measured default is one slot: two gates side by side finished no sooner than one
+  after the other and turned timing-sensitive tests red. So those gates run one at a
+  time, FIFO by ticket, and a gate with nothing heavy to run takes no slot. What
+  makes it fast is that each gate is small.
 - **One way onto main: the land queue.** It tests the merged result once and lands in
-  order, so main moving never means a re-gate.
+  order, so a branch is never merged with main and re-tested because another PR
+  landed.
 - **The whole suite runs once**, on the exact commit a promote takes to production.
 
 Elsewhere `/ship` runs the repo's own lint, typecheck, test and check commands.

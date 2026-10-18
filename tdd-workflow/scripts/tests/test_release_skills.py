@@ -122,8 +122,9 @@ class LandQueueSkillsTest(unittest.TestCase):
 
     def test_quickship_and_merge_route_through_the_queue(self):
         quick = skill("quickship")
-        self.assertIn("${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md", section(quick, "## Land queue `yes`", "## Land queue `no`"))
-        merge = section(skill("merge"), "## Land queue `yes`", "## Land queue `no`")
+        self.assertIn("${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md",
+                      section(quick, "## Land queue `queue`", "## Land queue `none`"))
+        merge = section(skill("merge"), "## Land queue `queue`", "## Land queue `none`")
         self.assertIn(LAND, commands(merge))
         self.assertIn(BACKGROUND_CEILING, merge)
         self.assertFalse([c for c in commands(merge) if "gh pr merge" in c])
@@ -131,14 +132,95 @@ class LandQueueSkillsTest(unittest.TestCase):
         self.assertTrue([c for c in commands(merge) if c.startswith("gh pr view") and "headRefName" in c])
 
     def test_the_generic_flows_drive_none_of_the_land_queue_repos_gate_scripts(self):
-        # A repo with ship:gate and ship:land always takes the queue path; no other repo
-        # has these scripts, so a branch for them in the generic flow is unreachable.
+        # A repo whose main has the queue always takes the queue path, so a branch for its
+        # gate machinery in the generic flow is unreachable. (A repo's own `gate:checks`
+        # sweep is not that machinery: the generic flow prefers it, M5 below.)
         generic = read(os.path.join(ROOT, "skills", "ship", "generic.md"))
-        quick = section(skill("quickship"), "## Land queue `no`")
+        quick = section(skill("quickship"), "## Land queue `none`")
         for text, name in ((generic, "ship/generic.md"), (quick, "quickship")):
-            for gone in ("gate-record", "gate-lock", "gate:checks", "run-checks-parallel", "TURBO_SCM_BASE"):
+            for gone in ("gate-record", "gate-lock", "run-checks-parallel", "TURBO_SCM_BASE", "ship:gate --"):
                 self.assertNotIn(gone, text, f"{name} names {gone}")
         self.assertIn("${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md", quick, "quickship runs the same gate")
+
+    def test_how_main_lands_is_read_from_origin_main_not_the_branch(self):
+        # B2: a branch cut before the queue landed has no ship:land of its own; reading
+        # the branch's package.json sent it to a bare merge around the queue.
+        context_line = "!`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/land_queue.py --fetch`"
+        for name in ("ship", "quickship", "merge"):
+            text = skill(name)
+            self.assertIn(f"- Land queue: {context_line}", text, name)
+            self.assertNotIn("package.json 2>/dev/null", text, f"{name} reads the branch's package.json")
+            for verdict in ("`queue`", "`none`", "`merge-main-first`", "`unknown: …`"):
+                self.assertRegex(text, rf"- {re.escape(verdict)}", f"{name} routes {verdict}")
+            self.assertIn("land-queue: only", text.split("\n---", 1)[0], f"{name} lands only through a queue")
+        for name in ("ship", "quickship"):
+            text = skill(name)
+            self.assertIn("main lands through the queue now; `git merge origin/main` first, then /ship.",
+                          " ".join(text.split()), name)
+            self.assertIn("Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/land_queue.py *)",
+                          text.split("\n---", 1)[0], f"{name} may run the context line")
+        self.assertIn("`git merge origin/main` first, then /merge.", " ".join(skill("merge").split()))
+        # The route is decided before the land-queue steps, and the generic flow is `none`.
+        ship = skill("ship")
+        self.assertLess(ship.index("- `merge-main-first` → STOP"), ship.index("1. **Something to ship.**"))
+        self.assertIn("`none`", read(os.path.join(ROOT, "skills", "ship", "generic.md")).split("\n\n", 2)[1])
+
+    def test_the_verdicts_the_skills_route_are_the_ones_land_queue_prints(self):
+        source = read(os.path.join(ROOT, "scripts", "land_queue.py"))
+        for verdict in ('"queue"', '"merge-main-first"', '"none"', '"unknown: '):
+            self.assertIn(verdict, source)
+
+    def test_generic_runs_the_assertions_never_the_writers_or_aggregates(self):
+        # M5: every check:*/env:* minus `:update` still ran env:sync, which rewrites
+        # .env.example, and aggregates on top of their members.
+        step = section(read(os.path.join(ROOT, "skills", "ship", "generic.md")),
+                       "5. **Project invariants", "These local checks")
+        self.assertIn("`pnpm gate:checks`", step, "the repo's own sweep comes first")
+        self.assertIn("nothing else for this step", step)
+        for word in ("`update`", "`sync`", "`fix`", "`write`", "`env:sync`", "`--write`", "`--fix`"):
+            self.assertIn(word, step, f"a writer is named by {word}")
+        self.assertIn("**an aggregate**", step)
+        self.assertIn("printed", step, "what the rule drops is said out loud")
+        self.assertIn("`jq .scripts package.json`", read(os.path.join(ROOT, "skills", "ship", "generic.md")),
+                      "step 3 lists the commands step 5 reads")
+
+    def test_main_red_says_how_it_clears(self):
+        outcome = " ".join(section(skill("ship"), "8. **The outcome", "## After it lands").split())
+        exit_6 = section(outcome, "- `6`", "- `2`")
+        merge = " ".join(section(skill("merge"), "3. **Report by exit code.**", "**Landing does NOT deploy.**").split())
+        merge_6 = section(merge, "- `6`", "- `5`")
+        for text, step, name in ((exit_6, "run step 7 again", "ship"), (merge_6, "run step 2 again", "merge")):
+            self.assertIn("clears only when a batch lands", text, name)
+            self.assertIn("flaky", text, name)
+            self.assertIn(step, text, name)
+            self.assertIn("did not use this approval", text, name)
+            self.assertIn("its own PR", text, name)
+            self.assertNotIn("once main is green", text, f"{name}: waiting does not clear main")
+
+    def test_a_gate_stopped_at_the_ceiling_is_run_again(self):
+        gate_exits = section(skill("ship"), "4. **Gate.**", "5. **Push:**")
+        self.assertRegex(gate_exits, r"- `143`")
+        self.assertIn("slot counts against that", " ".join(gate_exits.split()))
+        for path in ("skills/feature/phases/04-verify.md", "skills/refactor/phases/05-verify.md"):
+            verdicts = " ".join(section(read(os.path.join(ROOT, path)), "## Step 4", "## Step 5").split())
+            self.assertIn("`143`", verdicts, path)
+            self.assertIn("slot counts against that ceiling", verdicts, path)
+            self.assertIn("run it again", verdicts, path)
+
+    def test_the_gates_are_described_as_they_run(self):
+        # K = 1 is the measured default: gates with heavy work queue FIFO; one with
+        # nothing heavy takes no slot. They do not run side by side.
+        methodology = " ".join(skill("tdd-methodology").split())
+        manager = " ".join(read(os.path.join(ROOT, "scripts", "instance-manager.py")).split())
+        for text, name in ((methodology, "tdd-methodology"), (manager, "instance-manager")):
+            self.assertNotIn("Gates run side by side", text, name)
+            self.assertNotIn("run side by side.", text, name)
+            self.assertNotIn("never means a re-gate", text, name)
+            self.assertIn("FIFO", text, name)
+            self.assertIn("takes no slot", text, name)
+        ship = " ".join(section(skill("ship"), "## Land queue: the scripts", "3. **Commit.**").split())
+        self.assertNotIn("beside other worktrees' gates", ship)
+        self.assertIn("one slot", ship)
 
     def test_deploy_joins_a_run_that_already_builds_the_commit(self):
         text = skill("deploy")
