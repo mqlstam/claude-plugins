@@ -16,7 +16,11 @@ Two layers, one script:
   Bash arm   The floor. A command that performs a release action is refused
              unless a release skill that covers that action is active:
 
-               merge       gh pr merge, gh api .../pulls/N/merge
+               merge       gh pr merge, gh api .../pulls/N/merge, and the land
+                           queue: `pnpm ship:land land`, `node .../ship-land.mjs
+                           land` (any subcommand but `status`/`help`), whose
+                           integrator merges with a `gh pr merge` this hook
+                           never sees
                push-main   git push whose destination is main/master
                            (incl. a bare push from main, --all, --mirror)
                deploy-tag  git push of a deploy-* tag, --tags, --follow-tags
@@ -26,6 +30,11 @@ Two layers, one script:
              Each activation of a skill (typed, or invoked after /approve)
              covers its declared actions once; a SUCCESSFUL command of that
              class uses it up, a failed one does not (so a retry still works).
+             A command run in the background is judged by its completion
+             notice instead of its start: `failed` did not release, anything
+             else did, and one still running holds the approval. A land is
+             released unless it exited 1, 3 or 4, the exits after which its
+             PR did not and will not land from that entry.
              A release that ran also earns ONE `gh run rerun <id> --failed` of
              the run it started, under the same approval: a deploy tag pushed by
              its literal name (GitHub is asked whether run <id> is that tag's
@@ -75,7 +84,7 @@ from collections import Counter
 # The hook runs the script by path; tests load it with importlib under `python3 -I`,
 # which does not put the script's directory on sys.path. Name it explicitly.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from shell_text import mask_inert  # noqa: E402
+from shell_text import mask_inert, simple_commands  # noqa: E402
 
 ACTION_CLASSES = ("merge", "push-main", "deploy-tag", "dispatch")
 
@@ -93,7 +102,7 @@ PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(
 TRANSCRIPT_LAG_RETRY_S = 1.0
 
 # Cheap prefilter so the common Bash call never reads the transcript.
-RELEASE_VERB_HINT = re.compile(r"\bgh\b|\bpush\b")
+RELEASE_VERB_HINT = re.compile(r"\bgh\b|\bpush\b|\bship[-:]land\b")
 
 
 # --------------------------------------------------------------------------
@@ -394,13 +403,137 @@ def _rerun_of_one_run(segment: str) -> tuple[str, str | None] | None:
     return (run_id, slug) if run_id and failed else None
 
 
+# --------------------------------------------------------------------------
+# The land queue (Endoxia slice 803).
+# --------------------------------------------------------------------------
+
+# `ship:land land --pr <n>` enqueues a PR in a machine-wide queue whose integrator
+# squash-merges it onto main with a `gh pr merge` run inside the script, where this
+# hook never sees it. Enqueueing is therefore the merge. Its read-only subcommands
+# are an allow-list; any other, and none at all, is a merge: the wrong answer is a
+# refusal, never a release.
+SHIP_LAND_READ_ONLY = frozenset({"status", "help"})
+
+# The exits of `ship:land land` after which its PR did not land and will not land
+# from that entry: 1 the gate on the merged union named it, 3 a textual conflict
+# sent it back, 4 refused (its head moved, it was closed, GitHub refused the merge).
+# Not here, so a land that exits with them uses its approval: 0 landed, 5 main
+# changed outside the queue (it may have merged), 75 the wait's deadline (it may
+# still be queued and land). Source: the ship-land.mjs exit contract, slice 803 D4.
+# Re-derive when that contract changes.
+SHIP_LAND_NOT_LANDED_EXITS = frozenset({1, 3, 4})
+
+_SHIP_LAND_HINT = re.compile(r"\bship[-:]land\b")
+_SHIP_LAND_SCRIPT = re.compile(r"ship-land\.m?js")
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_WRAPPERS = {"env", "command", "exec", "nohup", "time", "nice", "timeout"}
+_SCRIPT_RUNNERS = {"pnpm", "npm", "yarn"}
+_RUNNER_DIR_FLAGS = {"-C", "--dir", "--prefix"}
+# node options after which the script is not run, or that take the next token.
+_NODE_NO_RUN = {"--check", "-c", "--test", "-e", "--eval", "-p", "--print"}
+_NODE_VALUE_FLAGS = {"-r", "--require", "--import", "--loader", "--experimental-loader",
+                     "--env-file", "--conditions", "-C", "--input-type"}
+
+
+def _command_words(toks: list[str]) -> list[str]:
+    """`toks` without leading assignments and wrappers (`env X=1`, `timeout 600`)."""
+    i = 0
+    while i < len(toks):
+        if _ASSIGNMENT.match(toks[i]):
+            i += 1
+            continue
+        wrapper = os.path.basename(toks[i])
+        if wrapper not in _WRAPPERS:
+            break
+        i += 1
+        while i < len(toks) and (toks[i].startswith("-") or _ASSIGNMENT.match(toks[i]) or (
+                wrapper == "timeout" and re.fullmatch(r"\d+(?:\.\d+)?[smhd]?", toks[i]))):
+            i += 1
+    return toks[i:]
+
+
+def _ship_land_call(toks: list[str]) -> tuple[list[str], str | None, str | None] | None:
+    """(the land script's arguments, a `-C`/`--dir` directory, the script's path) when
+    the simple command `toks` runs the land queue, else None."""
+    toks = _command_words(toks)
+    if not toks:
+        return None
+    program = os.path.basename(toks[0])
+    if program == "ship-land" or _SHIP_LAND_SCRIPT.fullmatch(program):
+        return toks[1:], None, toks[0]
+    if program in _SCRIPT_RUNNERS:
+        workdir = None
+        for i, tok in enumerate(toks[1:], start=1):
+            if tok in _RUNNER_DIR_FLAGS and i + 1 < len(toks):
+                workdir = toks[i + 1]
+            elif re.match(r"--(?:dir|prefix)=", tok):
+                workdir = tok.split("=", 1)[1]
+            elif tok == "ship:land":
+                rest = toks[i + 1:]
+                return (rest[1:] if rest[:1] == ["--"] else rest), workdir, None
+            elif tok in ("exec", "dlx"):
+                return _ship_land_call(toks[i + 1:])
+        return None
+    if program == "node":
+        i = 1
+        while i < len(toks):
+            tok = toks[i]
+            if tok in _NODE_NO_RUN:
+                return None
+            if tok in _NODE_VALUE_FLAGS:
+                i += 2
+                continue
+            if tok.startswith("-"):
+                i += 1
+                continue
+            if _SHIP_LAND_SCRIPT.fullmatch(os.path.basename(tok)):
+                return toks[i + 1:], None, tok
+            return None
+    return None
+
+
+def _lands(args: list[str]) -> bool:
+    if any(a in ("--help", "-h") for a in args):
+        return False
+    subcommand = next((a for a in args if not a.startswith("-")), None)
+    return subcommand not in SHIP_LAND_READ_ONLY
+
+
+def _ship_lands(cmd: str, masked: str, cwd: str, scope: RepoScope) -> list[int]:
+    """Start offsets of the simple commands in `cmd` that land a PR through the queue,
+    in a guarded repository. Read on text whose comments and heredoc bodies are
+    blank but whose quotes stay, so `node "scripts/ship-land.mjs" land` is a land and
+    `echo "pnpm ship:land land"` is not."""
+    if not _SHIP_LAND_HINT.search(cmd):
+        return []
+    quoted_kept = mask_inert(cmd, keep=lambda _c, region: region.kind in ("single", "double"))
+    starts = []
+    for start, end, _sep in simple_commands(masked):
+        text = quoted_kept[start:end]
+        if not _SHIP_LAND_HINT.search(text):
+            continue
+        call = _ship_land_call(_tokens(text))
+        if call is None or not _lands(call[0]):
+            continue
+        _args, workdir, script = call
+        target = _target_dir(cmd, masked, start, cwd)
+        if workdir:
+            target = os.path.normpath(os.path.join(target, os.path.expanduser(workdir)))
+        dirs = [target]
+        if script and "/" in script:  # the repository the script belongs to: <repo>/scripts/ship-land.mjs
+            dirs.append(os.path.normpath(os.path.join(target, os.path.expanduser(script), os.pardir, os.pardir)))
+        if any(scope.guards(d) for d in dirs):
+            starts.append(start)
+    return starts
+
+
 def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = GUARD_ALL,
              piped: set[str] | None = None, details: dict | None = None) -> set[str]:
     """The release action classes `cmd` performs. When `piped` is a set, the classes
     whose own command sends its output into a pipe are added to it as well. When
     `details` is a dict, it receives what a rerun credit needs: `tags` (deploy tags
     pushed by their literal name) and `reruns` ((run id, target dir, -R slug) for
-    each `gh run rerun <id> --failed`)."""
+    each `gh run rerun <id> --failed`), and `land` when the merge is a land."""
     classes: set[str] = set()
     if details is not None:
         details.setdefault("tags", [])
@@ -514,6 +647,13 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
         classes |= mine
         for cls in mine:
             note_pipe(m, cls)
+
+    for start in _ship_lands(cmd, masked, cwd, scope):
+        classes.add("merge")
+        if details is not None:
+            details["land"] = True
+        if piped is not None and _stops_at_pipe(masked, start):
+            piped.add("merge")
     return classes
 
 
@@ -556,6 +696,37 @@ def _is_error_result(block: dict) -> bool:
 
 def approval_names(args: str) -> list[str]:
     return [bare(t) for t in re.split(r"[,\s]+", args) if bare(t)]
+
+
+def parse_task_notification(content: str) -> tuple[str, str, int | None] | None:
+    """(tool-use id, status, exit code) of a background task's completion notice,
+    the `<task-notification>` entry Claude Code writes when the task ends. The id and
+    the status are the FIRST of their kind: Claude Code writes both before the
+    summary, and the summary quotes the command's description, which the model
+    wrote. The exit code is the LAST one in the summary, for the same reason:
+    Claude Code appends it after that description."""
+    if not content.startswith("<task-notification>"):
+        return None
+    tid = re.search(r"<tool-use-id>([^<]+)</tool-use-id>", content)
+    status = re.search(r"<status>([^<]+)</status>", content)
+    if not tid or not status:
+        return None
+    start, end = content.find("<summary>", status.end()), content.rfind("</summary>")
+    codes = re.findall(r"exit code (\d+)", content[start:end]) if 0 <= start < end else []
+    return tid.group(1).strip(), status.group(1).strip(), (int(codes[-1]) if codes else None)
+
+
+def background_released(effect: tuple, status: str, exit_code: int | None) -> bool:
+    """Whether a release command run in the background released, by its notice. A
+    `failed` one did not, the same rule as a foreground call whose result is an
+    error; `completed`, `killed` and `stopped` did or may have. A land is the
+    exception: a failure releases unless its exit rules the landing out."""
+    if status != "failed":
+        return True
+    _kind, classes, details = effect
+    if details.get("land"):
+        return not (set(classes) == {"merge"} and exit_code in SHIP_LAND_NOT_LANDED_EXITS)
+    return False
 
 
 # One GitHub REST round trip (measured 0.53 s from this machine, 2026-10-12). The
@@ -680,6 +851,8 @@ def build_ledger(transcript_path: str, current_tool_use_id: str | None,
     ledger = Ledger(resolver.actions, run_info)
     scope = scope or RepoScope.from_config(unknown_guarded=False)
     pending: dict[str, tuple] = {}
+    # Release commands started with `run_in_background`, waiting for their notice.
+    running: dict[str, tuple[tuple, str]] = {}
     # Claude Code can write ONE typed command into the transcript twice: same
     # content, same parentUuid, a new uuid (seen 2026-10-06 — one `/approve
     # merge` counted as two approvals). Two entries at the same place in the
@@ -709,6 +882,11 @@ def build_ledger(transcript_path: str, current_tool_use_id: str | None,
             content = (entry.get("message") or {}).get("content")
             if entry.get("type") == "user":
                 if isinstance(content, str):
+                    notice = None if entry.get("isSidechain") else parse_task_notification(content)
+                    if notice and notice[0] in running:
+                        effect, output = running.pop(notice[0])
+                        if background_released(effect, notice[1], notice[2]):
+                            _apply(ledger, effect, output)
                     if _is_human_prompt(entry):
                         key = (entry.get("parentUuid"), content)
                         if entry.get("parentUuid") is not None and key in seen_prompts:
@@ -724,7 +902,12 @@ def build_ledger(transcript_path: str, current_tool_use_id: str | None,
                     if not isinstance(block, dict) or block.get("type") != "tool_result":
                         continue
                     effect = pending.pop(block.get("tool_use_id"), None)
-                    if effect and not _is_error_result(block):
+                    if not effect or _is_error_result(block):
+                        continue
+                    if effect[0] == "bash" and effect[2].get("background"):
+                        # "Command running in background": it has started, not released.
+                        running[block.get("tool_use_id")] = (effect, _result_text(block))
+                    else:
                         _apply(ledger, effect, _result_text(block))
             elif entry.get("type") == "assistant" and not entry.get("isSidechain"):
                 for block in content or []:
@@ -750,11 +933,15 @@ def build_ledger(transcript_path: str, current_tool_use_id: str | None,
                             details=details,
                         )
                         if classes:
+                            details["background"] = bool(tool_input.get("run_in_background"))
                             pending[tid] = ("bash", classes, details)
-    # A tool call whose result never reached the transcript may still have run:
-    # count it as used. The wrong answer here is a refusal, never a release.
+    # A tool call whose result never reached the transcript may still have run, and
+    # one still running in the background may yet release: count both as used. The
+    # wrong answer here is a refusal, never a release.
     for effect in pending.values():
         _apply(ledger, effect, "")
+    for effect, output in running.values():
+        _apply(ledger, effect, output)
     return ledger
 
 

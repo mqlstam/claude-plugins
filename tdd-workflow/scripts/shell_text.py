@@ -89,3 +89,37 @@ def mask_inert(cmd: str, keep: Callable[[str, Region], bool] | None = None) -> s
             if out[k] != "\n" or region.kind != "heredoc":
                 out[k] = " "
     return "".join(out)
+
+
+def simple_commands(masked: str) -> list[tuple[int, int, str]]:
+    """(start, end, separator-after) for each simple command, read on masked text
+    so quoted separators do not count. Redirect ampersands (`2>&1`, `&>f`) and the
+    `|&` pipe are handled; `(`/`)` grouping is treated as a separator."""
+    out: list[tuple[int, int, str]] = []
+    i, n, start = 0, len(masked), 0
+    while i < n:
+        c = masked[i]
+        two = masked[i:i + 2]
+        sep = None
+        if two in ("&&", "||", "|&"):
+            sep = two
+        elif c == "|":
+            sep = "|"
+        elif c == "&":
+            if i > 0 and masked[i - 1] in "<>":
+                i += 1
+                continue
+            if masked[i + 1:i + 2] == ">":
+                i += 2
+                continue
+            sep = "&"
+        elif c in ";\n()":
+            sep = c
+        if sep is None:
+            i += 1
+            continue
+        out.append((start, i, sep))
+        i += len(sep)
+        start = i
+    out.append((start, n, ""))
+    return out

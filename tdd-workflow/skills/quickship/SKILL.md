@@ -1,18 +1,12 @@
 ---
 name: quickship
-description: Validate and push directly to main without a PR. Same gates as /ship — only the merge mechanism differs. Runs when the user types /quickship, or after /approve quickship (one run).
-release-actions: push-main
+description: Validate and push directly to main without a PR; where the repo lands through a queue, it is /ship. Runs when the user types /quickship, or after /approve quickship (one run).
+release-actions: push-main, merge
 argument-hint: "[commit message]"
-allowed-tools: Bash(git *), Bash(npm *), Bash(pnpm *), Bash(node *), Bash(jq *)
+allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *), Bash(jq *)
 ---
 
 # Quick Ship
-
-Pushes straight to main. Skips the PR + auto-merge dance that `/ship` runs.
-Use only when CI is disabled, branch protection is unconfigured, and the
-audit trail of a PR is not required. For most agentic-development setups,
-prefer `/ship` — pushing agent-generated code direct to main without a PR
-is the documented highest-risk pattern.
 
 ## Context (pre-computed)
 
@@ -21,6 +15,29 @@ is the documented highest-risk pattern.
 - Diff stats: !`git diff --stat HEAD`
 - Worktree: !`git rev-parse --show-toplevel`
 - Primary worktree: !`git worktree list --porcelain | head -2 | tail -1 | awk '{print $2}'`
+- Land queue: !`jq -r 'if (.scripts // {} | has("ship:gate") and has("ship:land")) then "yes" else "no" end' package.json 2>/dev/null || echo no`
+
+## Land queue `yes`: /quickship is /ship
+
+Where the repo lands through a queue (`package.json` has `ship:gate` and
+`ship:land`, Endoxia since slice 803), the queue is the only way onto `main`:
+nothing is pushed to `main` directly, and a PR is what the queue lands. So:
+
+- On `main` (no branch to land) → STOP: "Here the land queue is the only way onto
+  main: run /ship from a worktree branch."
+- Otherwise read `${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md` and follow it from
+  its Context (run those commands yourself), with `$ARGUMENTS` as the commit
+  subject. This /quickship's approval covers its land.
+
+Stop reading here. Everything below is for a repo without a land queue.
+
+## Land queue `no`: straight to main
+
+Pushes straight to main. Skips the PR + auto-merge dance that `/ship` runs.
+Use only when CI is disabled, branch protection is unconfigured, and the
+audit trail of a PR is not required. For most agentic-development setups,
+prefer `/ship` — pushing agent-generated code direct to main without a PR
+is the documented highest-risk pattern.
 
 ## How to run the gate
 
@@ -59,13 +76,14 @@ Based on the context above:
 4. **Ask what already passed, and say what you are skipping.**
 
    ```bash
-   node scripts/gate-record.mjs covered | sed 's/^/  reused from VERIFY: /'
+   node scripts/gate-record.mjs covered | sed 's/^/  reused from an earlier gate: /'
    ```
 
-   VERIFY's `invariant-runner` records each green against a content key (commit SHA
-   **plus** a tree hash covering uncommitted and untracked changes), so a command is
-   skipped only when nothing has moved. Print the list — never skip silently. An
-   empty list means everything below runs, which is correct, not a failure.
+   Where the repo has `scripts/gate-record.mjs`, each command below records its
+   green against a content key (commit SHA **plus** a tree hash covering uncommitted
+   and untracked changes), so a command is skipped only when nothing has moved.
+   Print the list — never skip silently. An empty list, or no such script, means
+   everything below runs, which is correct, not a failure.
 
 5. **The turbo lane — two bounded calls, under the machine-wide gate lock** (only one
    heavy gate at a time across every worktree; measured: a 238-minute ship at load

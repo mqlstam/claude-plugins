@@ -41,7 +41,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from shell_text import Region, mask_inert  # noqa: E402
+from shell_text import Region, mask_inert, simple_commands  # noqa: E402
 
 # The longest foreground sleep a command may hold, summed over its `sleep`s.
 #
@@ -173,40 +173,6 @@ _PIPEFAIL = re.compile(r"\bset\s+-\w*o\s+pipefail\b|\bset\s+-o\s+pipefail\b|\bse
 _STATUS_IGNORED = re.compile(r"^\s*(true|:|exit\s+0)\s*$")
 
 
-def _split_simple_commands(masked: str) -> list[tuple[int, int, str]]:
-    """(start, end, separator-after) for each simple command, read on masked text
-    so quoted separators do not count. Redirect ampersands (`2>&1`, `&>f`) and the
-    `|&` pipe are handled; `(`/`)` grouping is treated as a separator."""
-    out: list[tuple[int, int, str]] = []
-    i, n, start = 0, len(masked), 0
-    while i < n:
-        c = masked[i]
-        two = masked[i:i + 2]
-        sep = None
-        if two in ("&&", "||", "|&"):
-            sep = two
-        elif c == "|":
-            sep = "|"
-        elif c == "&":
-            if i > 0 and masked[i - 1] in "<>":
-                i += 1
-                continue
-            if masked[i + 1:i + 2] == ">":
-                i += 2
-                continue
-            sep = "&"
-        elif c in ";\n()":
-            sep = c
-        if sep is None:
-            i += 1
-            continue
-        out.append((start, i, sep))
-        i += len(sep)
-        start = i
-    out.append((start, n, ""))
-    return out
-
-
 def _first_word(text: str) -> str:
     for tok in text.split():
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok) or tok in ("command", "\\", "!"):
@@ -222,7 +188,7 @@ def masked_status(cmd: str) -> str | None:
     masked = mask_inert(cmd)
     if _PIPEFAIL.search(masked):
         return None
-    cmds = _split_simple_commands(masked)
+    cmds = simple_commands(masked)
     k = 0
     while k < len(cmds):
         j = k

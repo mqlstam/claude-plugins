@@ -87,25 +87,30 @@ Reach for it before reaching for another grep-shaped gate.
 | --------------------------- | -------------------------------------------------------------- |
 | `/feature <name> [--layers]`| New feature; single-agent build by default                     |
 | `/refactor <name> [--layers]`| Refactor; ANALYZE fans out, the build does not                |
-| `/ship`                     | Gate (reusing what VERIFY proved), commit, push, PR, merge     |
-| `/quickship`                | Same gates, straight to main                                   |
-| `/merge`                    | Squash-merge an existing PR                                    |
+| `/ship`                     | Commit, gate the change, push, PR, land on main                |
+| `/quickship`                | Same gates, straight to main; `/ship` where there is a land queue |
+| `/merge`                    | Squash-merge an existing PR, through the land queue where there is one |
 | `/deploy`                   | Release main via a `deploy-*` tag — the only thing that deploys (Endoxia: to STAGING; production is `/promote`) |
 | `/spinup` / `/teardown`     | This worktree's private runnable stack                         |
 | `/validate`                 | Check slice completeness                                       |
 
 ## Gate economics (why /ship is fast after a green VERIFY)
 
-The gate runs **once per content**. VERIFY's `invariant-runner` records each command it
-ran green against a key of `{commit SHA, tree hash}` — the tree hash covering
-uncommitted and untracked files, because at gate time nothing is committed yet. `/ship`
-skips exactly those commands, out loud. `.husky/pre-push` skips its sections only when
-`/ship` PROMOTED that record onto the pushed commit, which re-verifies the tree hash —
-so a hand push, an amend, or any edit after the gate gets the full hook.
+Where the repo has `ship:gate` and `ship:land` (Endoxia, slice 803):
 
-One heavy gate runs at a time across all worktrees (`scripts/gate-lock.mjs`): two at
-once is slower than queueing them and produces verdicts that are about the load, not
-the code.
+- **The gate is proportional to the change.** A deterministic floor picks what the
+  change reaches (affected lint and typecheck, the checks whose inputs changed, the
+  tests that import a changed file); the model only ADDS what no import reaches, with
+  a reason.
+- **A result belongs to a tree, machine-wide.** VERIFY's run records the tree it
+  proved; `/ship`, `pre-push` and the land queue reuse it for that identical tree, in
+  any worktree.
+- **Gates run side by side** on a fixed number of slots, in ticket order.
+- **One way onto main: the land queue.** It tests the merged result once and lands in
+  order, so main moving never means a re-gate.
+- **The whole suite runs once**, on the exact commit a promote takes to production.
+
+Elsewhere `/ship` runs the repo's own lint, typecheck, test and check commands.
 
 And never `sleep`-poll a long command. Run it with `run_in_background: true` and wait
 for the completion notification — polling was **46% of measured tool wall-clock**.

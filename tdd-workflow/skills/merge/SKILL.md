@@ -1,6 +1,6 @@
 ---
 name: merge
-description: Squash-merge a PR into main. Runs when the user types /merge, or after /approve merge (one run).
+description: Squash-merge a PR into main, through the land queue where the repo has one. Runs when the user types /merge, or after /approve merge (one run).
 release-actions: merge
 argument-hint: "[PR number or branch name]"
 ---
@@ -12,11 +12,45 @@ instructions here: `/ship` owns post-merge cleanup (it deletes this worktree's
 build output and PRINTS — never runs — the worktree/branch removal commands),
 and Claude Code's exit prompt covers the rest.
 
-## Process
+## Context (pre-computed)
+
+- Land queue: !`jq -r 'if (.scripts // {} | has("ship:land")) then "yes" else "no" end' package.json 2>/dev/null || echo no`
 
 Every command below is one plain command with the values written out literally:
 no variables, no `$(...)`, no pipe on the merge (the release gate refuses a piped
 release, and a worktree session refuses commands it cannot read).
+
+## Land queue `yes`: the queue lands it
+
+Where the repo has `ship:land` (Endoxia since slice 803) the land queue is the only
+way onto `main`: nothing merges a PR around it. The queue's integrator gates the
+merged result once and squash-merges in order.
+
+1. **Identify the PR.** `$ARGUMENTS` is the PR number or branch, else the current
+   branch: `gh pr view <PR-or-branch> --json number,state`. `<PR>` is its number;
+   state must be `OPEN`, otherwise STOP and report it.
+2. **Land it**, with `run_in_background: true`:
+   `pnpm ship:land land --pr <PR>`
+   then end your turn and act on the notification. For a PR already queued (a
+   `/ship` that hit its deadline) this waits for that entry again.
+3. **Report by exit code.**
+   - `0` landed: "Merge complete: PR #<PR> landed on main as <sha8>."
+   - `3` textual conflict: name the files and the change it collided with; the
+     branch needs `origin/main` merged in and `/ship` from its own worktree.
+   - `1` the gate failed on the merged result and named this PR: say what failed;
+     the fix belongs in the branch's worktree, then `/ship` there.
+   - `4` refused (head moved, PR closed, GitHub refused): report the reason.
+   - `5` main changed outside the queue: STOP and tell the owner, quoting it.
+   - `75` the queue ahead outlasted the deadline: #<PR> is still queued
+     (`pnpm ship:land status`); `/merge <PR>` waits again.
+
+   A land that exited `1`, `3` or `4` landed nothing and did not use this approval.
+
+**Landing does NOT deploy.** Run `/deploy` when you want it released.
+
+Stop reading here. Everything below is for a repo without a land queue.
+
+## Land queue `no`: process
 
 1. **Identify the PR.** `$ARGUMENTS` is the PR number or branch, else the current
    branch: `gh pr view <PR-or-branch> --json number,state,headRefOid,headRefName`.

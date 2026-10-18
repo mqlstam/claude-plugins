@@ -1,7 +1,7 @@
 {
   "name": "claude-tdd-workflow",
-  "version": "1.3.2",
-  "description": "TDD workflow with parallel builders, vertical slice methodology, quality gates, per-worktree runnable stacks (/spinup //teardown), and decoupled deploy (/deploy)",
+  "version": "1.4.0",
+  "description": "TDD workflow with parallel builders, vertical slice methodology, a gate proportional to the change and a land queue onto main where the repo has them (/ship), per-worktree runnable stacks (/spinup //teardown), and decoupled deploy (/deploy)",
   "author": {
     "name": "Miquel Stam"
   }

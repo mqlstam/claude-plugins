@@ -2,7 +2,8 @@
 
 ## Goal
 Independent, parallel verification. **You (the parent) decide which specialists run,
-from the diff, before launching anything.** Refactor's verify carries one specialist
+from the diff, before launching anything, and you run the gate yourself once they
+are done.** Refactor's verify carries one specialist
 feature's does not: `dead-code-finder`, because the most common refactor regression is
 not in the new code — it is what was not deleted. Specialists run in the same worktree
 as the parent (no `isolation: "worktree"` flag — known broken when nested, see Claude
@@ -28,7 +29,6 @@ agent start-up to read a diff and conclude they had nothing to do.
 | Specialist              | Model  | Launch when the diff touches                                                                                     |
 | ----------------------- | ------ | ---------------------------------------------------------------------------------------------------------------- |
 | `code-quality-reviewer` | sonnet | **always**                                                                                                       |
-| `invariant-runner`      | haiku  | **always**                                                                                                       |
 | `dead-code-finder`      | sonnet | **almost always on a refactor** — any renamed, moved or deleted symbol. Skip only for a rename whose callers were all updated mechanically in one commit. |
 | `jit-e2e-author`        | opus   | user-facing surface: `app/`, `pages/`, `*.tsx`, `middleware.ts`, API route files, auth/session code             |
 | `rehydration-checker`   | opus   | chat persistence or chat-visible rendering: `chat_turns`, `UIMessage`, message-part mappers/renderers, `features/chat-*` |
@@ -49,25 +49,27 @@ min, and the recurring shape was starting it and only then discovering no stack)
 3. Launch `jit-e2e-author` only once the stack answers on `$WT_BFF_PORT`.
 4. If the stack cannot come up, say so and record **e2e NOT RUN** — never a silent pass.
 
-There is no `.claude/verify-runtime.lock` any more: each worktree runs its own private
-stack. The machine-wide `gate-lock` covers the only remaining contention — the heavy gate.
+There is no `.claude/verify-runtime.lock`: each worktree runs its own private stack.
 
-## Step 3 — launch in two waves: the judges, then the gate
+## Step 3 — the judges, then the gate
 
-**Wave 1, in ONE message:** every in-scope specialist except `invariant-runner`
-(`code-quality-reviewer`, `dead-code-finder`, and whichever of the others the diff
-brings in). They may fix trivial issues in place.
+**Wave 1, in ONE message:** every in-scope specialist (`code-quality-reviewer`,
+`dead-code-finder`, and whichever of the others the diff brings in). They may fix
+trivial issues in place.
 
-**Wave 2, once wave 1 has returned and its fixes are in:** `invariant-runner`, once, on
-that final tree. Launched together, a judge's edit moves the tree hash under a running
-gate and invalidates what it recorded; on two consecutive ships (2026-10-07) that cost
-a re-run each time. The gate is the only specialist keyed to the exact tree, so it runs
-last. After a NEEDS_FIX round: fix, re-run only the failing judge, then the gate once
-more.
+**Wave 2, once wave 1 has returned and its fixes are in: run the gate yourself, once,
+on that final tree, with `run_in_background: true`** — `pnpm ship:gate --label verify`
+with the additions the diff needs and their `--reason` when the repo's `package.json`
+has `ship:gate`; otherwise the repo's own lint, typecheck and test commands, each its
+own background call. The feature workflow's VERIFY step 3 says how to choose the
+additions; a refactor that moves a shared module usually warrants the consumers'
+packages, or `--full`. Record nothing else: `ship:gate` records the tree it proved,
+and `/ship`, `pre-push` and the land queue reuse it for the identical tree.
 
-`invariant-runner` records what passed against the content key (commit SHA **plus** a
-tree hash covering uncommitted and untracked changes), which is what lets `/ship` and
-`.husky/pre-push` skip exactly those commands and nothing else.
+Launched together, a judge's edit moves the tree under a running gate and its record
+no longer covers it; on two consecutive ships (2026-10-07) that cost a re-run each
+time. The gate is the only step keyed to the exact tree, so it runs last. After a
+NEEDS_FIX round: fix, re-run only the failing judge, then the gate once more.
 
 **Do not `sleep`-poll.** Specialists return on their own; a backgrounded gate notifies
 on completion. Polling was 46% of measured tool wall-clock across 47 ships.
@@ -75,17 +77,21 @@ on completion. Polling was 46% of measured tool wall-clock across 47 ships.
 ## Step 4 — collect verdicts
 
 - `code-quality-reviewer` → READY | NEEDS_ATTENTION | NEEDS_WORK
-- `invariant-runner` → ALL_PASS | FAIL | DEGRADED
 - `dead-code-finder` → READY | NEEDS_ATTENTION | NEEDS_WORK | NO_OP
 - `jit-e2e-author` → READY | NEEDS_ATTENTION | NO_OP | BLOCKED | NOT_RUN
 - `rehydration-checker` → READY | NEEDS_ATTENTION | BLOCKED | NO_OP
 - `temporal-checker` → READY | NEEDS_ATTENTION | NEEDS_WORK | NO_OP
+- the gate → its exit: `0` pass; `1` fail (it names what failed); `2` refused — the
+  environment, not the code: do what its message says and run it again; `75` no slot
+  came free before its deadline: run it again
 
 ## Step 5 — aggregate
 
-- **READY** — every launched specialist returned READY/ALL_PASS/NO_OP
-- **NEEDS_FIX** — any returned NEEDS_WORK / FAIL / NEEDS_ATTENTION on a non-trivial issue
-- **BLOCKED** — a specialist could not do its job. Surface it.
+- **READY** — every launched specialist returned READY/NO_OP and the gate passed
+- **NEEDS_FIX** — any returned NEEDS_WORK / NEEDS_ATTENTION on a non-trivial issue, or
+  the gate failed
+- **BLOCKED** — a specialist could not do its job, or the gate refused for a reason
+  you cannot fix here. Surface it.
 
 `NOT_RUN` for e2e does not block READY but MUST appear in the summary.
 
@@ -107,14 +113,14 @@ into accumulating debt.
 
 - **READY** → write `.claude/.verify-state.json` with the current `git rev-parse HEAD`
   and timestamp. Suggest `/ship`.
-- **NEEDS_FIX** → fix in this chat, then re-run **only** the failing specialist. A fix
-  changes the tree, so every recorded gate green is discarded and `/ship` re-runs those
-  commands — which is correct.
+- **NEEDS_FIX** → fix in this chat, re-run **only** the failing specialist, then the
+  gate once more on the fixed tree.
 - **BLOCKED** → surface to the user. Do not ship.
 
 ## Completion
 
 - Every in-scope specialist returned, and every skipped one was named with its reason
+- The gate ran on the final tree
 - Aggregated verdict produced
 - `.claude/.verify-state.json` written if READY
 - Mark verify task as completed; suggest `/ship` if READY

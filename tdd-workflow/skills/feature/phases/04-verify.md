@@ -2,9 +2,10 @@
 
 ## Goal
 Independent, parallel verification. **You (the parent) decide which specialists run,
-from the diff, before launching anything.** Specialists run in the same worktree as
-the parent (no `isolation: "worktree"` flag — known broken when nested, see Claude
-Code issues #47548 #27881 #50850 #39886 #41010).
+from the diff, before launching anything, and you run the gate yourself once they
+are done.** Specialists run in the same worktree as the parent (no
+`isolation: "worktree"` flag — known broken when nested, see Claude Code issues
+#47548 #27881 #50850 #39886 #41010).
 
 ## Why parallel + multi-specialist
 
@@ -29,7 +30,6 @@ nothing to do. You already have the diff; deciding here costs nothing.
 | Specialist              | Model  | Launch when the diff touches                                                                                     |
 | ----------------------- | ------ | ---------------------------------------------------------------------------------------------------------------- |
 | `code-quality-reviewer` | sonnet | **always**                                                                                                       |
-| `invariant-runner`      | haiku  | **always**                                                                                                       |
 | `jit-e2e-author`        | opus   | user-facing surface: `app/`, `pages/`, `*.tsx`, `middleware.ts`, API route files, auth/session code             |
 | `rehydration-checker`   | opus   | chat persistence or chat-visible rendering: `chat_turns`, `UIMessage`, message-part mappers/renderers, `features/chat-*` |
 | `temporal-checker`      | haiku  | `packages/core/src/workflows/`, `packages/core/src/temporal/`, activity definitions, `workflow-versioning`        |
@@ -69,47 +69,54 @@ asks for `/spinup`. So the order is fixed:
    round as **e2e NOT RUN**. Do not report it as a pass, and do not let it block the
    static verdicts.
 
-There is no `.claude/verify-runtime.lock` any more: each worktree runs its own
-private stack, so the runtime lane no longer needs cross-chat serialization. The
-machine-wide `gate-lock` covers the only thing that still contends — the heavy gate.
+There is no `.claude/verify-runtime.lock`: each worktree runs its own private stack.
 
-## Step 3 — launch in two waves: the judges, then the gate
+## Step 3 — the judges, then the gate
 
-**Wave 1, in ONE message:** every in-scope specialist except `invariant-runner`. Each
-is single-shot; they cannot ask the user questions mid-run. They read, judge, and may
-fix trivial issues in place.
+**Wave 1, in ONE message:** every in-scope specialist. Each is single-shot; they
+cannot ask the user questions mid-run. They read, judge, and may fix trivial issues
+in place.
 
-**Wave 2, once wave 1 has returned and its fixes are in:** `invariant-runner`, once, on
-that final tree.
+**Wave 2, once wave 1 has returned and its fixes are in: run the gate yourself, once,
+on that final tree, with `run_in_background: true`.**
+
+- The repo's `package.json` has `ship:gate`: `pnpm ship:gate --label verify`, with the
+  additions the diff needs and their `--reason` — the same judgment as `/ship` step 4
+  (what no import reaches: a contract crossed over HTTP or the database, text loaded
+  at runtime, `--full` for a change whose reach you cannot bound). It records the tree
+  it proved, machine-wide, and `/ship`, `pre-push` and the land queue reuse that
+  record for the identical tree: that is why a `/ship` after a green VERIFY is fast.
+- Otherwise: the repo's own lint, typecheck and test commands (`pnpm lint`,
+  `pnpm typecheck`, `pnpm test`, or what its `package.json` names), each its own
+  background call.
+
+Record nothing else; the gate keeps its own record.
 
 Why the order (measured on two consecutive ships, 2026-10-07): launched together, the
 reviewer edited files while the gate was running both times. Every edit moved the
-tree hash, the gate's records stopped covering the tree, and the runner re-ran what
-the move invalidated: lint+typecheck and format both times, and once the whole
-check sweep. The gate is the only specialist whose output is keyed to the exact
-tree, so it runs on the tree the judges leave behind. A wave 1 that edits nothing
-costs a few minutes of waiting; a wave 1 that edits costs no re-run.
+tree, the gate's record stopped covering it, and the gate ran again. The gate is the
+only step keyed to the exact tree, so it runs on the tree the judges leave behind.
 
-`invariant-runner` **records what passed** against the content key, so `/ship` and
-`.husky/pre-push` can skip exactly those commands and nothing else. That is the whole
-reason a `/ship` after a green VERIFY is fast.
-
-**Do not `sleep`-poll while they work.** Specialists return on their own; a
+**Do not `sleep`-poll while they work.** Specialists return on their own; the
 backgrounded gate notifies on completion. Polling was 46% of measured tool wall-clock.
 
 ## Step 4 — collect verdicts
 
 - `code-quality-reviewer` → READY | NEEDS_ATTENTION | NEEDS_WORK
-- `invariant-runner` → ALL_PASS | FAIL | DEGRADED
 - `jit-e2e-author` → READY | NEEDS_ATTENTION | NO_OP | BLOCKED | NOT_RUN
 - `rehydration-checker` → READY | NEEDS_ATTENTION | BLOCKED | NO_OP
 - `temporal-checker` → READY | NEEDS_ATTENTION | NEEDS_WORK | NO_OP
+- the gate → its exit: `0` pass; `1` fail (it names what failed); `2` refused — the
+  environment, not the code: do what its message says and run it again; `75` no slot
+  came free before its deadline: run it again
 
 ## Step 5 — aggregate
 
-- **READY** — every launched specialist returned READY/ALL_PASS/NO_OP
-- **NEEDS_FIX** — any returned NEEDS_WORK / FAIL / NEEDS_ATTENTION on a non-trivial issue
-- **BLOCKED** — a specialist could not do its job (not the same as NOT_RUN). Surface it.
+- **READY** — every launched specialist returned READY/NO_OP and the gate passed
+- **NEEDS_FIX** — any returned NEEDS_WORK / NEEDS_ATTENTION on a non-trivial issue, or
+  the gate failed
+- **BLOCKED** — a specialist could not do its job (not the same as NOT_RUN), or the
+  gate refused for a reason you cannot fix here. Surface it.
 
 `NOT_RUN` for e2e does not block READY, but it MUST appear in the summary you give
 the user. A verification that did not happen is reported, never absorbed.
@@ -118,14 +125,14 @@ the user. A verification that did not happen is reported, never absorbed.
 
 - **READY** → write `.claude/.verify-state.json` with the current `git rev-parse HEAD`
   and timestamp. Suggest `/ship`.
-- **NEEDS_FIX** → fix in this chat, re-run **only** the failing judge, then run the
-  gate (wave 2) once more on the fixed tree. A fix changes the tree, so every recorded
-  gate green is discarded — which is correct.
+- **NEEDS_FIX** → fix in this chat, re-run **only** the failing judge, then the gate
+  (wave 2) once more on the fixed tree.
 - **BLOCKED** → surface to the user. Do not ship.
 
 ## Completion
 
 - Every in-scope specialist returned, and every skipped one was named with its reason
+- The gate ran on the final tree
 - Aggregated verdict produced
 - `.claude/.verify-state.json` written if READY
 - Mark verify task as completed; suggest `/ship` if READY
