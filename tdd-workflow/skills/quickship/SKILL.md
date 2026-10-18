@@ -27,8 +27,8 @@ the queue has no `ship:land` of its own.
 - `merge-main-first` on a branch → STOP: "main lands through the queue now;
   `git merge origin/main` first, then /ship."
 - `queue` on a branch → "Land queue `queue`" below.
-- `unknown: …` → STOP and report the line: without knowing how main lands, nothing
-  is pushed.
+- `unknown: …`, or anything else (no verdict, an error) → STOP and report the line:
+  without knowing how main lands, nothing is pushed.
 - `none` → "Land queue `none`" below.
 
 ## Land queue `queue`: /quickship is /ship

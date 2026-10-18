@@ -104,9 +104,9 @@ slice 803):
   tests that import a changed file); the model only ADDS what no import reaches, with
   a reason.
 - **A result belongs to a tree, machine-wide.** VERIFY's run records the tree it
-  proved, judged against the `origin/main` it saw; `/ship`, `pre-push` and the land
+  proved and the merge base it was judged from; `/ship`, `pre-push` and the land
   queue reuse it for that identical tree, in any worktree. When main moved since,
-  `/ship`'s gate runs again, proportional and on warm caches.
+  only the checks that read main's tip run again.
 - **Gates queue for the machine.** A gate with heavy work takes a slot, and the
   measured default is one slot: two gates side by side finished no sooner than one
   after the other and turned timing-sensitive tests red. So those gates run one at a

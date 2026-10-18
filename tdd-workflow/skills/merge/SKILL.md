@@ -27,8 +27,8 @@ How `main` lands decides the flow, not this checkout: the `Land queue` line fetc
 - `queue` → "Land queue `queue`" below.
 - `merge-main-first` → STOP: "main lands through the queue now; this checkout
   predates it: `git merge origin/main` first, then /merge."
-- `unknown: …` → STOP and report the line: without knowing how main lands, nothing
-  merges.
+- `unknown: …`, or anything else (no verdict, an error) → STOP and report the line:
+  without knowing how main lands, nothing merges.
 - `none` → "Land queue `none`" below.
 
 ## Land queue `queue`: the queue lands it
@@ -63,11 +63,14 @@ integrator gates the merged result once and squash-merges in order.
      it names a timing-sensitive or flaky failure (a timeout, a test that passes
      when run again), run step 2 again: exit 6 did not use this approval. Otherwise
      report the evidence and STOP: the fix goes through the queue as its own PR, and
-     landing it is what clears main; this PR lands after it.
+     landing it is what clears main; this PR lands after it. Never run
+     `pnpm ship:land clear-main-red` yourself: that is the owner's call.
    - `5` merged, but main is not, or may not be, the tested tree (changed outside
      the queue, or the merges stopped part-way): STOP and tell the owner, quoting it.
-   - `2` the land could not decide (environment, a merge not yet reported, a
-     bisect whose reds disagreed): run step 2 once more; a second `2`, report it.
+   - `2` the land could not decide (environment, a merge not yet reported, two
+     reds of one tree that share no step, a main red the queue's own passing runs
+     contradict, a bisect whose reds disagreed, an internal error): run step 2 once
+     more; a second `2`, report it.
      It promises nothing, so never report the PR as not merged.
    - `75` the queue ahead outlasted the deadline: #<PR> is still queued
      (`pnpm ship:land status`); `/merge <PR>` waits again.

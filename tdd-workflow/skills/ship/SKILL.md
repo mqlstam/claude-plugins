@@ -37,8 +37,8 @@ around the queue with a bare merge.
 - `merge-main-first` → STOP: "main lands through the queue now; `git merge
   origin/main` first, then /ship." (VERIFY then runs again on the merged tree; step
   2 asks for it.)
-- `unknown: …` → STOP and report the line: without knowing how main lands, nothing
-  merges.
+- `unknown: …`, or anything else (no verdict, an error) → STOP and report the line:
+  without knowing how main lands, nothing merges.
 
 1. **Something to ship.** Status empty and `git log --oneline origin/main..HEAD`
    empty → STOP: nothing to ship.
@@ -55,8 +55,8 @@ a bare PR merge, a merge through the API or a push to main under this skill.
 ## Land queue: the scripts own the mechanics, you own the judgment
 
 `pnpm ship:gate` picks what to run from the change and reuses the record of a tree
-already proven against the same `origin/main` (VERIFY's run, usually; when main
-moved since, it runs again, proportional and on warm caches). A gate with heavy
+already proven from the same merge base (VERIFY's run, usually). When main moved
+since, it runs again only the checks that read main's tip, and says which. A gate with heavy
 work waits for a slot of the machine: the measured default is one slot, so such
 gates run one at a time in ticket order, and one with nothing heavy to run takes no
 slot. `pnpm ship:land` hands the PR to one integrator that tests the merged result
@@ -107,8 +107,8 @@ outcome.
 
 5. **Push:** `git push -u origin <branch>`, never `--no-verify`. `pre-push` reuses
    the gate's record for this commit's tree; if it runs the gate itself, the tree
-   or the `origin/main` it is judged against changed after step 4: read why before
-   going on. If it refuses (no record covers the commit and the checkout is not
+   changed after step 4, or main moved and the checks that read its tip run again:
+   read why before going on. If it refuses (no record covers the commit and the checkout is not
    that commit), do what it says.
 
 6. **The PR.** When `gh pr view --json number,state` answers `OPEN` (a second pass
@@ -151,10 +151,14 @@ outcome.
      6 did not use this approval, and that batch's gate runs main's failing steps
      again. Otherwise main is broken: report the evidence and STOP. The fix goes
      through the queue as its own PR (landing it is what clears main), and this PR
-     lands after it.
+     lands after it. Never run `pnpm ship:land clear-main-red` yourself: removing
+     main's red record by hand is the owner's call. When the evidence says the
+     record is wrong, say so in the report and name that command.
    - `2` the land could not decide (it says which: an environment problem, a
-     merge GitHub accepted but did not report merged in time, or a bisect whose
-     reds disagreed) → run step 7 once more; it re-attaches to the same entry. A
+     merge GitHub accepted but did not report merged in time, two red runs of one
+     tree that share no step, a main red the queue's own passing runs of main
+     contradict, a bisect whose reds disagreed, or an internal error) → run step 7
+     once more; it re-attaches to the same entry. A
      second `2` → report it and STOP. It promises nothing: never report the PR
      as not merged (`pnpm ship:land status` shows where it is).
    - `5` merged, but main is not, or may not be, the tree the queue tested: main
