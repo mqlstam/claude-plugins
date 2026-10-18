@@ -13,7 +13,7 @@ intentional, not automatic:** the Deploy workflow triggers only on a `deploy-*`
 tag (or manual dispatch), never on a push to `main`. Since Endoxia slice 603 a
 tag stops at staging (`https://staging.endoxia.ai`); production is a separate,
 manual promote of what staging serves (`/promote`, or `gh workflow run
-promote.yml -f sha=<sha>`), with no rebuild. Since slice 803 a staging deploy
+promote.yml -f sha=<sha>`), with no rebuild. Since slice 806 a staging deploy
 builds, scans, integrates and boots, and runs no unit lane: the land queue gated
 each merge, and the whole suite runs once, on the commit a promote takes to
 production.

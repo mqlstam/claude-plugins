@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Does this repository land on `main` through a land queue, and can this checkout use it?
 
-The land queue (Endoxia slice 803: `pnpm ship:land`) is the only way onto `main` in a
+The land queue (Endoxia slice 806: `pnpm ship:land`) is the only way onto `main` in a
 repository whose `main` has one. That is a fact about `main`, not about the branch
 being shipped: a branch cut before the queue landed has no `ship:land` in its own
 `package.json`, and reading the branch's file sent it down the generic flow, to a bare

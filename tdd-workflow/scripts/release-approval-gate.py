@@ -444,7 +444,7 @@ def _rerun_of_one_run(segment: str) -> tuple[str, str | None] | None:
 
 
 # --------------------------------------------------------------------------
-# The land queue (Endoxia slice 803).
+# The land queue (Endoxia slice 806).
 # --------------------------------------------------------------------------
 
 # `ship:land land --pr <n>` enqueues a PR in a machine-wide queue whose integrator
@@ -465,7 +465,7 @@ SHIP_LAND_READ_ONLY = frozenset({"status", "help"})
 # answer never came) and 75 (the wait's deadline) promise nothing, since the entry
 # may still be queued or mid-landing and can still merge; and so does a land that
 # was killed, or whose exit cannot be read. Source: the exit contract in the header
-# of Endoxia's scripts/ship-land.mjs, slice 803 D4. Re-derive when it changes.
+# of Endoxia's scripts/ship-land.mjs, slice 806 D4. Re-derive when it changes.
 SHIP_LAND_NOT_LANDED_EXITS = frozenset({1, 3, 4, 6})
 
 # pnpm's own exit when the command it was asked to run does not exist: `pnpm ship:land`

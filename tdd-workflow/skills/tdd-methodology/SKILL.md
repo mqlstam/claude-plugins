@@ -97,7 +97,7 @@ Reach for it before reaching for another grep-shaped gate.
 ## Gate economics (why /ship is fast after a green VERIFY)
 
 Where the repo's `main` lands through a queue (`ship:gate` and `ship:land`, Endoxia,
-slice 803):
+slice 806):
 
 - **The gate is proportional to the change.** A deterministic floor picks what the
   change reaches (affected lint and typecheck, the checks whose inputs changed, the

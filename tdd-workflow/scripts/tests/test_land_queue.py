@@ -107,7 +107,7 @@ class LandQueueTest(unittest.TestCase):
     def test_the_branch_that_brings_the_queue_lands_the_way_main_does(self):
         self.repos.commit({"lint": "eslint ."})
         self.repos.push_main()
-        git(self.repos.clone, "checkout", "--quiet", "-b", "slice-803")
+        git(self.repos.clone, "checkout", "--quiet", "-b", "slice-806")
         self.repos.commit(QUEUE_SCRIPTS)
         self.assertEqual(lq.verdict(self.repos.clone, fetch=True), "none")
 

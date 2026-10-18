@@ -607,7 +607,7 @@ class ClassifyEdgesTest(unittest.TestCase):
 
 
 class LandQueueClassifyTest(unittest.TestCase):
-    """Slice 803: the land queue's integrator merges inside the script, so enqueueing
+    """Slice 806: the land queue's integrator merges inside the script, so enqueueing
     (`ship:land land`) is the merge the floor must see."""
 
     def c(self, cmd, cwd="/repo"):

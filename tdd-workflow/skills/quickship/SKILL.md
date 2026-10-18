@@ -33,7 +33,7 @@ the queue has no `ship:land` of its own.
 
 ## Land queue `queue`: /quickship is /ship
 
-Where `main` lands through a queue (Endoxia since slice 803), the queue is the only
+Where `main` lands through a queue (Endoxia since slice 806), the queue is the only
 way onto `main`: nothing is pushed to `main` directly, and a PR is what the queue
 lands; the release gate refuses a push to main or a bare merge under this skill
 there. So read `${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md` and follow it from its

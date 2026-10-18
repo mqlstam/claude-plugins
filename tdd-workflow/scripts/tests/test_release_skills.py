@@ -84,7 +84,7 @@ class ReleaseSkillsTest(unittest.TestCase):
 
 
 class LandQueueSkillsTest(unittest.TestCase):
-    """Slice 803: where the repo has ship:gate and ship:land, the scripts own the
+    """Slice 806: where the repo has ship:gate and ship:land, the scripts own the
     mechanics and the queue is the only way onto main."""
 
     def test_ship_lands_through_the_queue_and_owns_none_of_its_mechanics(self):

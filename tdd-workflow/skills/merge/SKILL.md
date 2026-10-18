@@ -33,7 +33,7 @@ How `main` lands decides the flow, not this checkout: the `Land queue` line fetc
 
 ## Land queue `queue`: the queue lands it
 
-Where `main` has `ship:land` (Endoxia since slice 803) the land queue is the only
+Where `main` has `ship:land` (Endoxia since slice 806) the land queue is the only
 way onto `main`: nothing merges a PR around it, and the release gate refuses a
 bare PR merge or a merge through the API under this skill there. The queue's
 integrator gates the merged result once and squash-merges in order.
