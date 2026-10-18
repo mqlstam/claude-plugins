@@ -98,6 +98,10 @@ outcome.
      commit the fix, run step 4 again.
    - `2` → refused: the environment, not the code (wrong Node major, a missing
      build). Do what its message says and run it again; never work around it.
+     A dependency install that failed is a `2` too: the gate first makes the
+     worktree's dependencies ready for its lockfile, so a red after a merge of
+     main is never a stale install. Retry the install it names (`bash
+     scripts/worktree-deps.sh`, its log in the git dir); never move a version pin.
    - `75` → no slot came free before its deadline: run it again once; a second
      `75` → report it and STOP.
    - `143`, or a notice that it was stopped at its time limit → the Bash ceiling
