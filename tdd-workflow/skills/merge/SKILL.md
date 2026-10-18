@@ -45,16 +45,20 @@ merged result once and squash-merges in order.
    - `4` refused: superseded by a newer push, or a batch was landing the old head
      → run step 2 again (after that batch); PR closed, retargeted, or GitHub
      refused → report the reason.
-   - `5` main changed outside the queue: STOP and tell the owner, quoting it.
-   - `2` an environment problem: report it. It promises nothing: the entry stays
-     queued and may still land, so never report the PR as not merged.
+   - `6` main is red on its own; nothing of the batch merged: report the evidence
+     (what fails on `origin/main` alone); land again once main is green.
+   - `5` merged, but main is not, or may not be, the tested tree (changed outside
+     the queue, or the merges stopped part-way): STOP and tell the owner, quoting it.
+   - `2` the land could not decide (environment, a merge not yet reported, a
+     bisect whose reds disagreed): run step 2 once more; a second `2`, report it.
+     It promises nothing, so never report the PR as not merged.
    - `75` the queue ahead outlasted the deadline: #<PR> is still queued
      (`pnpm ship:land status`); `/merge <PR>` waits again.
 
    After `0`, delete the remote branch: `git push origin --delete <branch>` (a
    "remote ref does not exist" means the repository already did).
 
-   A land that exited `1`, `3` or `4` landed nothing and did not use this approval;
+   A land that exited `1`, `3`, `4` or `6` landed nothing and did not use this approval;
    every other exit used it.
 
 **Landing does NOT deploy.** Run `/deploy` when you want it released.

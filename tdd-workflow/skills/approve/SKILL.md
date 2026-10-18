@@ -16,8 +16,8 @@ What it allows:
 - For each named release skill, you may invoke it ONCE in this session through the
   Skill tool. Its release action (a merge, or a land through the queue; a push to
   main; a deploy tag; a workflow dispatch) is then allowed once. A failed one does
-  not use it, except a land that may still have merged: only exits 1, 3 and 4 say
-  its PR did not land. A command run in the background is judged by how it ended.
+  not use it, except a land that may still have merged: only exits 1, 3, 4 and 6
+  say its PR did not land. A command run in the background is judged by how it ended.
 - A release that ran may re-run the failed jobs of the run it started once,
   `gh run rerun <id> --failed`, without a new approval (a deploy whose run failed
   on a transient error, say). Any other re-run needs an approval of a skill that

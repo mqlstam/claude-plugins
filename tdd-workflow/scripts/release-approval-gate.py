@@ -34,8 +34,8 @@ Two layers, one script:
              notice instead of its start: `failed` did not release, anything
              else did, and one still running holds the approval. A land, in
              the foreground or the background, is released unless it exited
-             1, 3 or 4, the exits after which its PR did not and will not land
-             from that entry (2 and 75 promise nothing, 0 and 5 merged).
+             1, 3, 4 or 6, the exits after which its PR did not and will not
+             land from that entry (2 and 75 promise nothing, 0 and 5 merged).
              A release that ran also earns ONE `gh run rerun <id> --failed` of
              the run it started, under the same approval: a deploy tag pushed by
              its literal name (GitHub is asked whether run <id> is that tag's
@@ -418,14 +418,16 @@ SHIP_LAND_READ_ONLY = frozenset({"status", "help"})
 # The exits of `ship:land land` after which its PR did not land and will not land
 # from that entry: 1 the gate on the merged union named it, 3 a textual conflict
 # sent it back, 4 refused (closed, a draft, not against main, superseded by a newer
-# head, being landed at its previous head, or GitHub refused the merge). Every
+# head, being landed at its previous head, or GitHub refused a merge main does not
+# hold), 6 main is red on its own (the batch's failing steps fail on main alone),
+# so the entry was released unmerged. Every
 # other exit uses the approval: 0 and 5 merged (5: main's tree is not the one the
 # queue tested); 2 (usage or environment, which can follow a `gh pr merge` whose
 # answer never came) and 75 (the wait's deadline) promise nothing, since the entry
 # may still be queued or mid-landing and can still merge; and so does a land that
 # was killed, or whose exit cannot be read. Source: the exit contract in the header
 # of Endoxia's scripts/ship-land.mjs, slice 803 D4. Re-derive when it changes.
-SHIP_LAND_NOT_LANDED_EXITS = frozenset({1, 3, 4})
+SHIP_LAND_NOT_LANDED_EXITS = frozenset({1, 3, 4, 6})
 
 _SHIP_LAND_HINT = re.compile(r"\bship[-:]land\b")
 _SHIP_LAND_SCRIPT = re.compile(r"ship-land\.m?js")

@@ -118,16 +118,25 @@ the PR text, and reading the outcome.
      the entry, or a batch was already landing the old head → run step 7 again
      (after that batch, for the second); the PR was closed, retargeted, or GitHub
      refused the merge → report the reason and STOP.
-   - `2` an environment problem (it says which) → report it and STOP. It promises
-     nothing: the entry stays queued and may still land, so never report the PR as
-     not merged (`pnpm ship:land status` shows where it is).
-   - `5` main changed outside the queue: STOP and tell the owner, quoting what it
-     printed. Who moved main, and what happens to it, is the owner's call.
+   - `6` main is red on its own: what failed on the merged result also fails on
+     `origin/main` alone, so no PR was blamed and none of the batch merged. Report
+     the evidence it printed (the failing steps and tests on main) and STOP: land
+     again once main is green. Fixing main is its own change, through the queue.
+   - `2` the land could not decide (it says which: an environment problem, a
+     merge GitHub accepted but did not report merged in time, or a bisect whose
+     reds disagreed) → run step 7 once more; it re-attaches to the same entry. A
+     second `2` → report it and STOP. It promises nothing: never report the PR
+     as not merged (`pnpm ship:land status` shows where it is).
+   - `5` merged, but main is not, or may not be, the tree the queue tested: main
+     changed outside the queue, or the batch's merges stopped part-way and main
+     sits at a prefix it gated only afterwards (it prints that gate's verdict).
+     STOP and tell the owner, quoting what it printed; what happens to main is the
+     owner's call.
    - `75` the queue ahead outlasted the deadline: report that #<PR> is still
      queued (`pnpm ship:land status`) and that `/merge <PR>` waits for it again.
    - anything else: report its output and STOP.
 
-   A land that exited `1`, `3` or `4` landed nothing, so it did not use this
+   A land that exited `1`, `3`, `4` or `6` landed nothing, so it did not use this
    /ship's approval: steps 4-8 again are this same run. Every other exit used it.
 
 ## After it lands

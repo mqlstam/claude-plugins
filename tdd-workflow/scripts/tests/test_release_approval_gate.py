@@ -727,7 +727,7 @@ class BackgroundReleaseTest(unittest.TestCase):
         self.assertIsNotNone(bash_decision(t, LAND))
 
     def test_a_land_that_did_not_land_can_be_landed_again(self):
-        for code in (1, 3, 4):
+        for code in (1, 3, 4, 6):
             t, tid = self.landed_in_background()
             t.notify(tid, "failed", code)
             self.assertIsNone(bash_decision(t, LAND), f"exit {code}")
@@ -790,7 +790,7 @@ class ForegroundLandTest(unittest.TestCase):
         return t
 
     def test_a_land_that_did_not_land_can_be_landed_again(self):
-        for code in (1, 3, 4):
+        for code in (1, 3, 4, 6):
             self.assertIsNone(bash_decision(self.landed(code), LAND), f"exit {code}")
 
     def test_a_land_that_landed_or_may_still_land_uses_the_approval(self):
