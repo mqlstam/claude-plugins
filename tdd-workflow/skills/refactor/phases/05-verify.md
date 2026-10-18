@@ -59,8 +59,9 @@ trivial issues in place.
 
 **Wave 2, once wave 1 has returned and its fixes are in: run the gate yourself, once,
 on that final tree, with `run_in_background: true`** — `pnpm ship:gate --label verify`
-with the additions the diff needs and their `--reason` when the repo's `package.json`
-has `ship:gate`; otherwise the repo's own lint, typecheck and test commands, each its
+with the Bash `timeout` at `7200000` (a full gate may hold for 75 minutes) and the
+additions the diff needs with one `--reason` for them all, when the repo's
+`package.json` has `ship:gate`; otherwise the repo's own lint, typecheck and test commands, each its
 own background call. The feature workflow's VERIFY step 3 says how to choose the
 additions; a refactor that moves a shared module usually warrants the consumers'
 packages, or `--full`. Record nothing else: `ship:gate` records the tree it proved,

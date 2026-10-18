@@ -8,9 +8,9 @@ argument-hint: "[PR number or branch name]"
 # Merge
 
 Squash-merge an existing PR into main. Do not print manual cleanup
-instructions here: `/ship` owns post-merge cleanup (it deletes this worktree's
-build output and PRINTS — never runs — the worktree/branch removal commands),
-and Claude Code's exit prompt covers the rest.
+instructions here: `/ship` owns post-merge cleanup (it stops this worktree's
+processes and deletes its build output), and Claude Code's exit prompt removes
+the worktree.
 
 ## Context (pre-computed)
 
@@ -27,24 +27,35 @@ way onto `main`: nothing merges a PR around it. The queue's integrator gates the
 merged result once and squash-merges in order.
 
 1. **Identify the PR.** `$ARGUMENTS` is the PR number or branch, else the current
-   branch: `gh pr view <PR-or-branch> --json number,state`. `<PR>` is its number;
-   state must be `OPEN`, otherwise STOP and report it.
-2. **Land it**, with `run_in_background: true`:
-   `pnpm ship:land land --pr <PR>`
-   then end your turn and act on the notification. For a PR already queued (a
-   `/ship` that hit its deadline) this waits for that entry again.
+   branch: `gh pr view <PR-or-branch> --json number,state,headRefName`. `<PR>` is
+   its number and `<branch>` its head branch; state must be `OPEN`, otherwise STOP
+   and report it.
+2. **Land it**, with `run_in_background: true` and the Bash `timeout` at `7200000`:
+   `pnpm ship:land land --pr <PR> --max-wait-ms 7000000`
+   then end your turn and act on the notification (`--max-wait-ms` keeps the
+   queue's own deadline inside the background ceiling, less 200 s to read the
+   exit). For a PR already queued (a `/ship` that hit its deadline) this
+   re-attaches to that entry and waits for it again.
 3. **Report by exit code.**
    - `0` landed: "Merge complete: PR #<PR> landed on main as <sha8>."
    - `3` textual conflict: name the files and the change it collided with; the
      branch needs `origin/main` merged in and `/ship` from its own worktree.
    - `1` the gate failed on the merged result and named this PR: say what failed;
      the fix belongs in the branch's worktree, then `/ship` there.
-   - `4` refused (head moved, PR closed, GitHub refused): report the reason.
+   - `4` refused: superseded by a newer push, or a batch was landing the old head
+     → run step 2 again (after that batch); PR closed, retargeted, or GitHub
+     refused → report the reason.
    - `5` main changed outside the queue: STOP and tell the owner, quoting it.
+   - `2` an environment problem: report it. It promises nothing: the entry stays
+     queued and may still land, so never report the PR as not merged.
    - `75` the queue ahead outlasted the deadline: #<PR> is still queued
      (`pnpm ship:land status`); `/merge <PR>` waits again.
 
-   A land that exited `1`, `3` or `4` landed nothing and did not use this approval.
+   After `0`, delete the remote branch: `git push origin --delete <branch>` (a
+   "remote ref does not exist" means the repository already did).
+
+   A land that exited `1`, `3` or `4` landed nothing and did not use this approval;
+   every other exit used it.
 
 **Landing does NOT deploy.** Run `/deploy` when you want it released.
 

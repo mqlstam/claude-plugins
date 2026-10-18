@@ -81,7 +81,9 @@ in place.
 on that final tree, with `run_in_background: true`.**
 
 - The repo's `package.json` has `ship:gate`: `pnpm ship:gate --label verify`, with the
-  additions the diff needs and their `--reason` — the same judgment as `/ship` step 4
+  Bash `timeout` at `7200000` (a full gate may hold for 75 minutes, past the 30-minute
+  default), and the additions the diff needs with one `--reason` for them all — the
+  same judgment as `/ship` step 4
   (what no import reaches: a contract crossed over HTTP or the database, text loaded
   at runtime, `--full` for a change whose reach you cannot bound). It records the tree
   it proved, machine-wide, and `/ship`, `pre-push` and the land queue reuse that

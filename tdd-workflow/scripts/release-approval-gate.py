@@ -32,9 +32,10 @@ Two layers, one script:
              class uses it up, a failed one does not (so a retry still works).
              A command run in the background is judged by its completion
              notice instead of its start: `failed` did not release, anything
-             else did, and one still running holds the approval. A land is
-             released unless it exited 1, 3 or 4, the exits after which its
-             PR did not and will not land from that entry.
+             else did, and one still running holds the approval. A land, in
+             the foreground or the background, is released unless it exited
+             1, 3 or 4, the exits after which its PR did not and will not land
+             from that entry (2 and 75 promise nothing, 0 and 5 merged).
              A release that ran also earns ONE `gh run rerun <id> --failed` of
              the run it started, under the same approval: a deploy tag pushed by
              its literal name (GitHub is asked whether run <id> is that tag's
@@ -416,11 +417,14 @@ SHIP_LAND_READ_ONLY = frozenset({"status", "help"})
 
 # The exits of `ship:land land` after which its PR did not land and will not land
 # from that entry: 1 the gate on the merged union named it, 3 a textual conflict
-# sent it back, 4 refused (its head moved, it was closed, GitHub refused the merge).
-# Not here, so a land that exits with them uses its approval: 0 landed, 5 main
-# changed outside the queue (it may have merged), 75 the wait's deadline (it may
-# still be queued and land). Source: the ship-land.mjs exit contract, slice 803 D4.
-# Re-derive when that contract changes.
+# sent it back, 4 refused (closed, a draft, not against main, superseded by a newer
+# head, being landed at its previous head, or GitHub refused the merge). Every
+# other exit uses the approval: 0 and 5 merged (5: main's tree is not the one the
+# queue tested); 2 (usage or environment, which can follow a `gh pr merge` whose
+# answer never came) and 75 (the wait's deadline) promise nothing, since the entry
+# may still be queued or mid-landing and can still merge; and so does a land that
+# was killed, or whose exit cannot be read. Source: the exit contract in the header
+# of Endoxia's scripts/ship-land.mjs, slice 803 D4. Re-derive when it changes.
 SHIP_LAND_NOT_LANDED_EXITS = frozenset({1, 3, 4})
 
 _SHIP_LAND_HINT = re.compile(r"\bship[-:]land\b")
@@ -729,6 +733,21 @@ def background_released(effect: tuple, status: str, exit_code: int | None) -> bo
     return False
 
 
+# How Claude Code records a foreground Bash call that ran and exited non-zero: an
+# error result whose text starts with `Exit code <n>`, written before the command's
+# own output (a timeout is `Exit code 143`). A call refused before it ran (a hook's
+# deny, a permission rejection, a `<tool_use_error>`) carries no exit code.
+_FOREGROUND_EXIT = re.compile(r"Exit code (\d+)\b")
+
+
+def errored_released(effect: tuple, text: str) -> bool:
+    """Whether a release command whose foreground result is an error released. One
+    that never ran did not, and one that ran and failed did not either, except a
+    land, which is judged by its exit like a background one."""
+    m = _FOREGROUND_EXIT.match(text)
+    return m is not None and background_released(effect, "failed", int(m.group(1)))
+
+
 # One GitHub REST round trip (measured 0.53 s from this machine, 2026-10-12). The
 # hook's own budget is 30 s (hooks.json) and a decision reads the transcript at
 # most twice with a 1 s pause; each run id is looked up once per read, so 10 s
@@ -902,7 +921,11 @@ def build_ledger(transcript_path: str, current_tool_use_id: str | None,
                     if not isinstance(block, dict) or block.get("type") != "tool_result":
                         continue
                     effect = pending.pop(block.get("tool_use_id"), None)
-                    if not effect or _is_error_result(block):
+                    if not effect:
+                        continue
+                    if _is_error_result(block):
+                        if effect[0] == "bash" and errored_released(effect, _result_text(block)):
+                            _apply(ledger, effect, _result_text(block))
                         continue
                     if effect[0] == "bash" and effect[2].get("background"):
                         # "Command running in background": it has started, not released.

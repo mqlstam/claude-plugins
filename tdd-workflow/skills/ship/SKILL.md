@@ -48,6 +48,9 @@ the PR text, and reading the outcome.
    scratch files) and commit in conventional form, `type(scope): what changes for
    the reader` (`feat`, `fix`, `refactor`, `docs`, `test`, `chore`, ...;
    `commit-msg` refuses anything else). `$ARGUMENTS`, when given, is the subject.
+   Then `git status --short` must print nothing: the gate records the working tree,
+   and `pre-push` looks up the tree of the commit it pushes, so a file left
+   uncommitted or untracked makes the two differ.
 
 4. **Gate.** Read the diff (`git diff --stat origin/main...HEAD`, then the hunks
    that matter). The floor already selects lint and typecheck of what is affected,
@@ -64,10 +67,12 @@ the PR text, and reading the outcome.
    - a change whose reach you cannot bound (build tooling, the runtime, a helper
      everything calls) → `--full`.
 
-   Every addition takes `--reason "<one line: why the floor misses it>"`. You only
-   add; nothing narrows the floor. With `run_in_background: true`:
-   `pnpm ship:gate --label ship` plus your additions. It prints what it ran and
-   why. Write the PR title and body while it runs.
+   Any addition needs `--reason "<one line: why the floor misses each>"`, given
+   once: the gate keeps one reason per run, and a second `--reason` replaces the
+   first. You only add; nothing narrows the floor. With `run_in_background: true`
+   and the Bash `timeout` at `7200000` (a full gate may hold for 75 minutes, past
+   the 30-minute default): `pnpm ship:gate --label ship` plus your additions. It
+   prints what it ran and why. Write the PR title and body while it runs.
    - `0` → passed (or reused a record of this tree): step 5.
    - `1` → it names what failed and where the full output is. Fix it here,
      commit the fix, run step 4 again.
@@ -77,8 +82,10 @@ the PR text, and reading the outcome.
      `75` → report it and STOP.
 
 5. **Push:** `git push -u origin <branch>`, never `--no-verify`. `pre-push` reuses
-   the gate's record for this tree; if it runs the gate itself, the tree changed
-   after step 4: read why before going on.
+   the gate's record for this commit's tree; if it runs the gate itself, the tree
+   or the `origin/main` it is judged against changed after step 4: read why before
+   going on. If it refuses (no record covers the commit and the checkout is not
+   that commit), do what it says.
 
 6. **The PR.** When `gh pr view --json number,state` answers `OPEN` (a second pass
    after a conflict), that is `<PR>`. Otherwise
@@ -86,10 +93,14 @@ the PR text, and reading the outcome.
    subject; the body says what changed and why, the test plan, and each gate
    addition with its reason. `<PR>` is the number it prints.
 
-7. **Land**, with `run_in_background: true`:
-   `pnpm ship:land land --pr <PR>`
-   then end your turn and act on the notification. It waits as long as the queue
-   ahead of it needs, to a deadline derived from that queue.
+7. **Land**, with `run_in_background: true` and the Bash `timeout` at its ceiling,
+   `7200000`:
+   `pnpm ship:land land --pr <PR> --max-wait-ms 7000000`
+   then end your turn and act on the notification. The queue derives its own
+   deadline from what is ahead of it; `--max-wait-ms` keeps it inside the
+   background ceiling (7,200,000 ms less 200 s for the exit to be read). A run the
+   harness stops anyway is safe, and like `75` it used the approval: `/merge <PR>`
+   re-attaches to the same entry, and an integrator that died is taken over.
 
 8. **The outcome is its exit code.** Its last lines say what happened.
    - `0` landed: it prints main's new SHA. Report "Landed #<PR> on main as
@@ -103,8 +114,13 @@ the PR text, and reading the outcome.
    - `1` the gate failed on the merged result and named this PR: the break is
      between this change and what landed before it. Merge `origin/main` as for
      `3`, then step 4 reproduces it on the merged tree; fix, commit, step 4.
-   - `4` refused (the head moved, the PR was closed, GitHub refused the merge):
-     report the reason it printed and STOP.
+   - `4` refused. Read the reason it printed: a newer push of this PR superseded
+     the entry, or a batch was already landing the old head → run step 7 again
+     (after that batch, for the second); the PR was closed, retargeted, or GitHub
+     refused the merge → report the reason and STOP.
+   - `2` an environment problem (it says which) → report it and STOP. It promises
+     nothing: the entry stays queued and may still land, so never report the PR as
+     not merged (`pnpm ship:land status` shows where it is).
    - `5` main changed outside the queue: STOP and tell the owner, quoting what it
      printed. Who moved main, and what happens to it, is the owner's call.
    - `75` the queue ahead outlasted the deadline: report that #<PR> is still
@@ -115,6 +131,10 @@ the PR text, and reading the outcome.
    /ship's approval: steps 4-8 again are this same run. Every other exit used it.
 
 ## After it lands
+
+0. **Land queue only: delete the remote branch.** `git push origin --delete <branch>`.
+   A "remote ref does not exist" means the repository already deleted it; that is
+   fine. (The generic flow deletes it in its merge step.)
 
 1. **Stop what this worktree started, in this order: dev server, Chrome, containers.**
    Stop BEFORE deleting build output: `rm -rf packages/web/.next` under a live

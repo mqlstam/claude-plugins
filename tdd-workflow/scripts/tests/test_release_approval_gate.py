@@ -778,6 +778,50 @@ class BackgroundReleaseTest(unittest.TestCase):
         self.assertIsNone(gate.parse_task_notification("<task-notification><status>failed</status>"))
 
 
+class ForegroundLandTest(unittest.TestCase):
+    """A land run in the foreground that exits non-zero comes back as an error result
+    whose text starts with `Exit code <n>` (Claude Code writes it before the output).
+    It is judged by that exit, like a background land: 2 can follow a merge whose
+    answer never came, and 5 is merged."""
+
+    def landed(self, code, command=LAND, approval=("claude-tdd-workflow:ship", "")):
+        t = Transcript().typed(*approval)
+        t.bash(command, error=True, output=f"Exit code {code}\nland: #1361 ...")
+        return t
+
+    def test_a_land_that_did_not_land_can_be_landed_again(self):
+        for code in (1, 3, 4):
+            self.assertIsNone(bash_decision(self.landed(code), LAND), f"exit {code}")
+
+    def test_a_land_that_landed_or_may_still_land_uses_the_approval(self):
+        for code in (2, 5, 75, 143):
+            self.assertIsNotNone(bash_decision(self.landed(code), LAND), f"exit {code}")
+
+    def test_only_the_leading_exit_counts(self):
+        t = Transcript().typed("claude-tdd-workflow:ship")
+        t.bash(LAND, error=True, output="Exit code 5\nExit code 3\nlanded")
+        self.assertIsNotNone(bash_decision(t, LAND))
+        t = Transcript().typed("claude-tdd-workflow:ship")
+        t.bash(LAND, error=True, output="refused: superseded\nExit code 5")
+        self.assertIsNone(bash_decision(t, LAND), "no leading exit: it never ran")
+
+    def test_a_land_refused_before_running_uses_nothing(self):
+        t = Transcript().typed("claude-tdd-workflow:ship")
+        t.bash(LAND, error=True, output="PreToolUse:Bash hook error: Blocked: ...")
+        self.assertIsNone(bash_decision(t, LAND))
+
+    def test_any_other_failed_release_did_not_release(self):
+        merge = "gh pr merge 12 --squash --match-head-commit abc"
+        t = Transcript().typed("claude-tdd-workflow:merge")
+        t.bash(merge, error=True, output="Exit code 1\nGraphQL: Pull request is not mergeable")
+        self.assertIsNone(bash_decision(t, merge))
+
+    def test_a_land_beside_another_release_is_not_refunded_by_its_exit(self):
+        t = self.landed(3, command="git push origin deploy-20261018-120000 && " + LAND,
+                        approval=("approve", "ship deploy"))
+        self.assertIn("deploy-tag", bash_decision(t, "git push origin deploy-20261018-120001"))
+
+
 class FrontmatterTest(unittest.TestCase):
     def test_reads_release_actions(self):
         fd, path = tempfile.mkstemp(suffix=".md")

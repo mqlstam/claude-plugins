@@ -39,13 +39,6 @@ audit trail of a PR is not required. For most agentic-development setups,
 prefer `/ship` — pushing agent-generated code direct to main without a PR
 is the documented highest-risk pattern.
 
-## How to run the gate
-
-Identical to `/ship`, and for the same measured reason: split the gate into calls
-that fit under the 10-minute `Bash` ceiling, run the long one with
-`run_in_background: true`, and **wait for the completion notification** — never a
-`sleep N` poll loop (46% of measured tool wall-clock across 47 ships).
-
 ## Validation
 
 Based on the context above:
@@ -73,90 +66,18 @@ Based on the context above:
    fi
    ```
 
-4. **Ask what already passed, and say what you are skipping.**
-
-   ```bash
-   node scripts/gate-record.mjs covered | sed 's/^/  reused from an earlier gate: /'
-   ```
-
-   Where the repo has `scripts/gate-record.mjs`, each command below records its
-   green against a content key (commit SHA **plus** a tree hash covering uncommitted
-   and untracked changes), so a command is skipped only when nothing has moved.
-   Print the list — never skip silently. An empty list, or no such script, means
-   everything below runs, which is correct, not a failure.
-
-5. **The turbo lane — two bounded calls, under the machine-wide gate lock** (only one
-   heavy gate at a time across every worktree; measured: a 238-minute ship at load
-   average 126 with turbo tasks dying on SIGINT rather than failing).
-
-   **Anchor the affected set to `origin/main`, and include `build`.** The remote
-   deploy validates against `origin/main` over a full checkout and runs the
-   production build; a local `--affected` computed against a stale/diverged local
-   `main` — or one that omits `build` — tests a NARROWER set than what actually
-   lands.
-
-   Run in a plain shell, never through `scripts/wt.sh`.
-
-   ```bash
-   git fetch --quiet origin main 2>/dev/null || true
-
-   # fast — foreground
-   node scripts/gate-lock.mjs run --label "quickship lint+typecheck" -- \
-     env TURBO_SCM_BASE=origin/main pnpm exec turbo run lint typecheck --affected \
-   && node scripts/gate-record.mjs record turbo:lint-typecheck pass --by quickship
-   ```
-
-   ```bash
-   # long — run_in_background: true, then wait for the notification
-   node scripts/gate-lock.mjs run --label "quickship test+build" -- \
-     env TURBO_SCM_BASE=origin/main pnpm exec turbo run test build --affected \
-       --concurrency=1 --log-order=stream \
-   && node scripts/gate-record.mjs record turbo:test-build pass --by quickship
-   ```
-
-   ```bash
-   # formatting — before the commit, so lint-staged has nothing to rewrite
-   pnpm format:check && node scripts/gate-record.mjs record format:check pass --by quickship
-   ```
-
-   Skip whichever step 4 already listed. STOP on failure; never accept a `FULL TURBO`
-   all-cached re-run as proof after a failure — use `--force`.
-
-6. **Project invariants — one parallel run:**
-
-   ```bash
-   pnpm gate:checks
-   ```
-
-   It discovers every `check:*` / `env:*` script, decomposes the aggregate rather
-   than trusting it, runs three lanes (light × cores−1, heavy × 1, db × 1), preserves
-   each failure's output, and records each pass. It excludes the `:update` variants:
-   an updater OVERWRITES the committed baseline with whatever the tree measures, so
-   it cannot fail — running it here reports green while silently redefining the
-   target, absorbing drift that came from `main` rather than from your change.
-
-   Fallback for a repo without `gate:checks`:
-
-   ```bash
-   for script in $(jq -r '.scripts | keys[]
-                          | select(test("^check:|^env:|env-drift"))
-                          | select(test(":update$") | not)' package.json); do
-     pnpm "$script" || { echo "FAILED: pnpm $script"; exit 1; }
-   done
-   ```
-
-   A baseline that genuinely needs to move is part of the change, not a side effect
-   of the pre-ship sweep — update it deliberately and say so in the commit.
+4. **The gate: the same as `/ship`'s.** Read
+   `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md` and follow its "How to run the
+   gate" and its "Validation" (steps 3-5), then come back here: the repo's own lint,
+   typecheck, format check, test and build, then its `check:*` / `env:*` scripts,
+   each its own call, the long ones in the background. STOP on any failure.
 
 ## Ship (do everything below in a SINGLE message)
 
 1. Stage all relevant changed files
 2. Create a commit using conventional format (`feat:`, `refactor:`, `fix:`)
    - If $ARGUMENTS provided, use as commit message
-3. `node scripts/gate-record.mjs promote` — re-keys the record onto the new commit,
-   but only after recomputing the tree hash and finding it unchanged. If it refuses,
-   `pre-push` runs in full, which is the correct outcome.
-4. Push to main: `git push origin main`
+3. Push to main: `git push origin main`
 
 Do all of the above in a single response. Do not send any other text besides
 the tool calls.
@@ -170,8 +91,7 @@ rm -rf packages/web/.next
 `/quickship` runs from the primary checkout, so there is no worktree to reclaim.
 
 **Delete only `.next` — never `packages/*/dist`.** Same rule as `/ship`, and the
-primary checkout is not an exception to it: `pnpm env:drift` and `check:contracts`
-read `packages/shared/dist`, and `scripts/run-checks-parallel.mjs` refuses to start
-without it. A checkout stripped of `dist` cannot run its own next gate, and the
+primary checkout is not an exception to it: a repo's checks may read a package's
+build output, so a checkout stripped of `dist` cannot run its own next gate, and the
 failure reads as a red gate rather than as a missing build — which is worse than
 the disk it frees.
