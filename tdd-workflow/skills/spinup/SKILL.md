@@ -12,7 +12,8 @@ exercised + self-verified independently of other worktrees.
 **Run this only when you actually need to RUN the app** — the start of a VERIFY
 phase whose diff touches user-facing surface, or when the user asks. A stack's
 lifetime is a NEED, not a session: plan-only, review-only and backend-only work
-needs no containers, and a soft-stop follows when the run is done.
+needs no containers, and the project's session-end and idle hooks soft-stop the
+stack once no live session needs it.
 
 Requires the repo's `scripts/worktree-env.sh` + parametrized compose ports (see
 `.claude/rules/worktree-runtime.md`). If they're absent, this repo isn't set up
@@ -49,7 +50,8 @@ bash scripts/worktree-stack.sh up --full       # everything
 bash scripts/worktree-stack.sh up core legal ml   # explicit roots
 ```
 
-`bash scripts/worktree-stack.sh down` is the soft-stop, `status` the overview.
+`status` is the overview. `bash scripts/worktree-stack.sh down` is a person's manual
+soft-stop: it does not check whether another session still uses the stack.
 Use the numbered steps only in a repository without that script.
 
 ## Steps (do in order; STOP and surface any failure — never retry blindly)

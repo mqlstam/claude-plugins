@@ -77,7 +77,7 @@ class DirectReleaseTest(unittest.TestCase):
 class ReleaseRedesignContractTest(unittest.TestCase):
     def test_version_and_no_retired_mechanisms(self):
         manifest = json.loads(read(os.path.join(ROOT, ".claude-plugin", "plugin.json")))
-        self.assertEqual(manifest["version"], "1.6.3")
+        self.assertEqual(manifest["version"], "1.6.4")
         for relative in ("skills/ship/SKILL.md", "skills/ship/generic.md", "skills/merge/SKILL.md", "skills/quickship/SKILL.md",
                          "skills/feature/phases/04-verify.md", "skills/refactor/phases/05-verify.md",
                          "skills/tdd-methodology/SKILL.md", "scripts/instance-manager.py",
