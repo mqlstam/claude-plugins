@@ -53,8 +53,10 @@ observable through a page, an API route, a job, a message or a mail. A change wi
 observable effect (an internal refactor, docs, tooling) skips it; say so in one line.
 
 When it is in scope, **start the stack first, in the background**, with the profile
-that serves the touched paths. Follow the project's runtime rule for the command, the
-stack cap and the profiles; fall back to `bash scripts/wt.sh docker compose up -d`.
+that serves the touched paths: `/spinup` (`--full` for the heavy sidecars), or the
+command in the project's runtime rule. Never override the stack cap or stop another
+session's stack; at the cap, runtime verification is NOT RUN and the rest of VERIFY
+carries on.
 
 ## Step 2 - launch in one message
 
@@ -124,6 +126,10 @@ An interrupted command or any other nonzero exit is not a pass. NOT RUN is never
 pass: it always appears in the summary to the user.
 
 ## After the verdict
+
+Do not stop the stack yourself. Another session may share this worktree and be using
+it; the project's session-end and idle hooks soft-stop it once no live session needs
+it, which a stop from inside one session cannot know.
 
 - **READY** -> write `.claude/.verify-state.json`:
   `{ "headSha": "<git rev-parse HEAD>", "timestamp": "<ISO 8601>", "verdict": "READY" }`.

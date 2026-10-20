@@ -1,7 +1,6 @@
 ---
 name: spinup
 description: Bring up THIS git worktree's own private runnable stack (own ports, DB, Temporal, headless Chrome) so the agent can run and self-verify the app in parallel with other worktrees. Light by default; `--full` for the heavy sidecars. For repos with a scripts/worktree-env.sh (see .claude/rules/worktree-runtime.md).
-disable-model-invocation: true
 allowed-tools: Bash(source *), Bash(. *), Bash(docker *), Bash(pnpm *), Bash(PORT=*), Bash(./scripts/*), Bash(bash scripts/*), Bash(git *)
 ---
 
@@ -70,8 +69,11 @@ Use the numbered steps only in a repository without that script.
    ```bash
    ./scripts/worktree-stack-cap.sh --check
    ```
-   If it refuses, do **not** override it silently — tell the user which stacks
-   are running and let them choose what to stop.
+   If it refuses, do **not** override it (`WT_STACK_CAP`) and never stop another
+   session's stack: the cap is what keeps Docker from wedging under every
+   session at once. Tell the user which stacks are running and let them choose
+   what to stop; inside VERIFY, record runtime verification as NOT RUN with the
+   cap's output, and carry on with the rest of the phase.
 3. **Bring up the private stack** (own postgres/temporal/minio; the DB init
    entrypoint fires on the fresh namespaced volume). Light by default:
    ```bash
@@ -118,6 +120,8 @@ Use the numbered steps only in a repository without that script.
    - Say which profile is up and what it therefore cannot do.
 
 Canonical `pnpm dev:up` is unaffected — it never sources `worktree-env.sh`, so
-its ports, DB, project name and memory ceilings stay the defaults. When the run
-is finished, soft-stop (`docker compose stop` + `./scripts/worktree-chrome.sh
---stop`) to free RAM while keeping the data, or `/teardown` to remove it.
+its ports, DB, project name and memory ceilings stay the defaults. Leave the
+stack running when you finish: another session may share this worktree, and the
+project's session-end and idle hooks soft-stop it once no live session needs it.
+A person who wants it down now runs `bash scripts/worktree-stack.sh down` (data
+kept) or `/teardown` (data removed).
