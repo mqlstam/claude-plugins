@@ -77,7 +77,7 @@ class DirectReleaseTest(unittest.TestCase):
 class ReleaseRedesignContractTest(unittest.TestCase):
     def test_version_and_no_retired_mechanisms(self):
         manifest = json.loads(read(os.path.join(ROOT, ".claude-plugin", "plugin.json")))
-        self.assertEqual(manifest["version"], "1.6.2")
+        self.assertEqual(manifest["version"], "1.6.3")
         for relative in ("skills/ship/SKILL.md", "skills/ship/generic.md", "skills/merge/SKILL.md", "skills/quickship/SKILL.md",
                          "skills/feature/phases/04-verify.md", "skills/refactor/phases/05-verify.md",
                          "skills/tdd-methodology/SKILL.md", "scripts/instance-manager.py",
@@ -121,6 +121,11 @@ class ReleaseRedesignContractTest(unittest.TestCase):
         verify = read(os.path.join(ROOT, "skills/feature/phases/04-verify.md"))
         self.assertIn("/spinup", verify)
         self.assertNotIn("worktree-stack.sh down", verify)
+
+    def test_codex_review_runs_at_high_reasoning_effort(self):
+        # Owner, 2026-10-20: the Codex reviewer runs at high; T3's default is low.
+        verify = read(os.path.join(ROOT, "skills/feature/phases/04-verify.md"))
+        self.assertIn('options: [{ id: "reasoningEffort", value: "high" }]', verify)
 
     def test_verify_launches_only_agents_that_exist(self):
         text = read(os.path.join(ROOT, "skills/feature/phases/04-verify.md"))

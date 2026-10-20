@@ -67,8 +67,10 @@ carries on.
   T3 Code (the `t3-code` MCP tools are available), call `orchestrator_capabilities`
   and pick an instance of the other family: a `codex` instance when Claude built the
   change, a `claudeAgent` instance when Codex did. Call `delegate_task` with
-  `target: { providerInstanceId: <that instance>, model: <the first model it lists> }`,
-  `mode: "async"`, `role: "review"`, `isolation: "shared"` (the reviewer must see
+  `target: { providerInstanceId: <that instance>, model: <the first model it lists> }`;
+  for a Codex reviewer add `options: [{ id: "reasoningEffort", value: "high" }]` (the
+  owner's setting; the catalog's default is lower), and check that
+  `orchestrator_capabilities` still lists that option and value. Then `mode: "async"`, `role: "review"`, `isolation: "shared"` (the reviewer must see
   uncommitted work), a `clientRequestId` unique to this round, and a title such as
   `VERIFY review <slice> r1`. The task text is the body of
   `${CLAUDE_PLUGIN_ROOT}/agents/correctness-reviewer.md` without its frontmatter,
