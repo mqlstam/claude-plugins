@@ -22,22 +22,36 @@ range and promote gates production. Report missing or pending health too.
    `<PR>`, `<SHA>` (its head) and `<BRANCH>` are written literally from here on.
    State must be `OPEN`; otherwise STOP and report it.
 
+   **VERIFY covers the PR head, always.** `git fetch origin <BRANCH>`, then
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py check --commit <SHA>` must exit 0. It runs from any
+   checkout of this repository: it finds the verdict of the worktree that reviewed
+   the work, including integrations it accepted. A missing verdict means VERIFY
+   first; changed contents get a review of the paths it names.
+
    **Prepare the existing PR when needed, under this merge approval.** Inspect
    its validation evidence against `<SHA>`. If integration or validation is needed,
    use the PR branch's own checkout, with a clean tree and HEAD equal to `<SHA>`.
    If this session is elsewhere, STOP and name the required checkout; never switch
-   a shared branch. Check `.claude/.verify-state.json` against HEAD before changing
-   it; missing or stale evidence requires VERIFY first. Then `git fetch origin main`
+   a shared branch. Then `git fetch origin main`
    and `git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main`.
    Resolve conflicts and finish the merge with that same conventional subject;
    keep commit hooks enabled.
-   Integration alone does not re-arm VERIFY; substantive feature changes do.
+   Right after the merge commit, run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py integrate`. Exit 0: the
+   merge is exactly git's clean merge of the reviewed work and main, and the verdict
+   covers it without another review. Exit 1 names the paths a conflict resolution or
+   a hook changed: give them and the contracts they touch a targeted correctness
+   review, and once it is READY run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`.
+   Substantive feature changes re-arm VERIFY fully.
    Read this checkout's `package.json` after merging: run `pnpm ship:check` when
    declared, otherwise follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`.
    Only exit `0` passes; fix a failure or environment refusal before continuing.
    Use background execution and its completion notification for long commands.
-   Push updates with `git push origin <BRANCH>`, then read the existing PR again
-   to set `<SHA>` to its new `headRefOid`. A non-fast-forward rejection requires
+   Before every push, `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py check --commit HEAD` must exit 0, so
+   nothing a hook or a later commit added goes out unreviewed. Push updates with
+   `git push origin <BRANCH>`, and set `<SHA>` to the commit you checked and pushed
+   (`git rev-parse HEAD`). Read the existing PR again. When the PR's `headRefOid` differs from it, someone else pushed: fetch
+   that commit and run `verify-state.py check --commit` on it; adopt it only when
+   that exits 0, otherwise STOP and report the unreviewed head. A non-fast-forward rejection requires
    inspecting the new remote head and validating the integrated tree; never force
    the push. Keep this PR; do not create another one.
 

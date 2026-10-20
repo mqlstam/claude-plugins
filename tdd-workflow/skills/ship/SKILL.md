@@ -3,7 +3,7 @@ name: ship
 description: Validate the change, commit, merge main, push, open a PR and squash-merge directly. Runs when the user types /ship, or after /approve ship (one run).
 release-actions: merge
 argument-hint: "[PR title]"
-allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py *)
+allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py *)
 ---
 
 # Ship
@@ -21,21 +21,31 @@ Stay on this branch; use a feature branch for /ship. Main uses /quickship.
 
 1. **Something to ship.** If there is neither a change nor an unmerged commit, STOP.
 
-2. **VERIFY before changing HEAD.** Read `.claude/.verify-state.json`: its `headSha`
-   must equal `git rev-parse HEAD`. Missing or stale state means complete VERIFY
-   through /feature or /refactor first. Check it now, before committing and before
+2. **VERIFY before changing HEAD.** `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py check` must exit 0: the READY
+   verdict in `.claude/.verify-state.json` covers exactly the current contents. A
+   missing verdict means complete VERIFY through /feature or /refactor first; changed
+   contents get a review of the paths it names, then validation. Check it now, before committing and before
    merging main; those steps do not re-arm VERIFY. A new feature change does.
 
 3. **Commit.** Stage relevant files and create a conventional commit. Read the diff
    first and keep unrelated changes out. The working tree must then be clean.
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py check --commit HEAD` must
+   then exit 0: the commit holds exactly the reviewed contents. An index staged
+   before the review can commit other contents than the files on disk, which the
+   working-tree check in step 2 cannot see. On a refusal, review the paths it names.
 
 4. **Merge main in.** `git fetch origin main`, then
    `git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main`.
    Resolve conflicts in this branch, preserving both changes, and finish the merge
    commit with that same conventional subject.
    Keep commit hooks enabled. Do not rewrite history or force-push.
-   An ordinary integration conflict does not restart VERIFY;
-   substantive new feature work does. Local validation below checks the merged tree.
+   Right after the merge commit, run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py integrate`. Exit 0: the
+   merge is exactly git's clean merge of the reviewed work and main, and the verdict
+   covers it without another review. Exit 1 names the paths a conflict resolution or
+   a hook changed: give them and the contracts they touch a targeted correctness
+   review, and once it is READY run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`.
+   Substantive new feature work re-arms VERIFY fully. Local validation below checks
+   the merged tree.
 
 5. **Local validation.** Read the checkout's own `package.json` after the merge.
    When it declares `ship:check`, run `pnpm ship:check` once. It selects affected
@@ -51,7 +61,9 @@ Stay on this branch; use a feature branch for /ship. Main uses /quickship.
    runs with `run_in_background: true`; wait for its completion notification,
    never sleep-poll. Any validation failure blocks this ship.
 
-6. **Push and open the PR.** `git push -u origin <branch>`, then
+6. **Push and open the PR.** Before every push, `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py check --commit HEAD` must exit 0, so
+   nothing a hook or a later commit added goes out unreviewed. Then
+   `git push -u origin <branch>`, then
    `gh pr create --title "<title>" --body-file <body-file>`. Write the summary and
    validation evidence to that file first. Use $ARGUMENTS as title when supplied.
    Read main's newest `endoxia/main-health` status with
@@ -68,7 +80,10 @@ Stay on this branch; use a feature branch for /ship. Main uses /quickship.
    26.6 min. Every command below is one plain command with the values written out.
 
    a. **Read the PR:** `gh pr view --json number,headRefOid,headRefName`. From here
-      on `<PR>`, `<SHA>` (the head you pushed) and `<BRANCH>` are written literally.
+      on `<PR>`, `<SHA>` and `<BRANCH>` are written literally. `<SHA>` is the commit you
+      checked and pushed (`git rev-parse HEAD`). When the PR's `headRefOid` differs from it, someone else pushed: fetch
+      that commit and run `verify-state.py check --commit` on it; adopt it only when
+      that exits 0, otherwise STOP and report the unreviewed head.
 
    b. **Wait for the settled state, in the background.** With
       `run_in_background: true`:
@@ -83,8 +98,9 @@ Stay on this branch; use a feature branch for /ship. Main uses /quickship.
       - `3` `DIRTY` / `BEHIND` → `git fetch origin main`, then
         `git rev-list --count HEAD..origin/main`. `0` means the state was stale: run
         the wait again. Otherwise main moved: use the merge command from step 4
-        with its conventional subject, resolve conflicts, run local validation
-        again, then push and wait again. Do not re-arm VERIFY solely for that merge.
+        with its conventional subject, resolve conflicts, run `verify-state.py integrate`
+        as in step 4, run local validation again, check the commit as in step 6, then
+        push and wait again.
       - `4` `BLOCKED` → a required check or review is missing: `gh pr checks <PR>`,
         report it, STOP. `--admin` only when the user explicitly asks to force:
         `gh pr merge <PR> --squash --admin --match-head-commit <SHA>`. Never silently.

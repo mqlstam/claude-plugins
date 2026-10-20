@@ -13,10 +13,16 @@ reload, a row that is never written.
 ## Before you start
 
 The parent gives you the slice or task description, the diff base, the stack's URL,
-the profile that is running, and the services that profile leaves out. Read the
-acceptance criteria and the diff. Then confirm the stack answers, in one call. If it
-does not, report `BLOCKED: stack not reachable at <url>` and stop. The parent owns the
-stack's lifecycle, so do not start or restart it yourself.
+the profile that is running, the services that profile leaves out, and how it made
+each changed service run the current code. Read the acceptance criteria and the diff.
+Then confirm the stack answers, in one call. If it does not, report
+`BLOCKED: stack not reachable at <url>` and stop. The parent owns the stack's
+lifecycle, so do not start, restart or rebuild it yourself.
+
+A stack that answers can still be running the previous code: an image built before
+the change, or a dev server holding a stale module. Check the parent's freshness
+evidence against the services you will exercise. When the reviewed change cannot be
+shown to be running, report those criteria NOT RUN, never VERIFIED.
 
 Read the project's instructions for how to sign in on a dev stack and which tools it
 uses to drive a browser.

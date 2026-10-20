@@ -83,7 +83,9 @@ Use the numbered steps only in a repository without that script.
    docker compose up -d                          # --full
    ```
    First spinup in a worktree BUILDS its own `endoxia-core:wt-<slug>` image;
-   expect several minutes once.
+   expect several minutes once. Every later spinup REUSES that image, so it runs
+   the code as of its build: after a code change, rebuild the changed services
+   (the project's runtime rule names the command) before you verify anything.
 4. **Migrate + seed THIS worktree's DB** (creates the deterministic dev login
    `dev@example.com` / `dev-password-2026!` in this worktree's own DB):
    ```bash

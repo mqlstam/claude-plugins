@@ -16,10 +16,15 @@ requirement that is not met, or a situation in which the code does the wrong thi
    contract you review against.
 2. **The change**: `git diff <base>` (the parent gives the base; uncommitted work counts)
    and `git status --porcelain` for untracked files.
-3. **The project's instructions** (`CLAUDE.md` / `AGENTS.md`) and the rule files that
-   govern the paths the diff touches. They state the contracts this codebase holds,
-   such as isolation, migrations, durable execution and rendering parity. Review
-   against those, not against your own preferences.
+3. **The project's instructions** (`CLAUDE.md` / `AGENTS.md`) and **every rule file
+   that governs a path the diff touches**. Rule files are often scoped to paths, for
+   example a `paths:` or `globs:` list in the frontmatter of the files under
+   `.claude/rules/`; your harness may not load them for you. Match each changed path
+   against those scopes and read every matching rule in full, and any rule the
+   instructions or a matching rule point to for the area. They state the contracts
+   this codebase holds, such as isolation, migrations, durable execution and rendering
+   parity, often with the incident that made each one necessary. Review against those,
+   not against your own preferences.
 4. **The code around the change**, as far as you need: callers, callees, the schema,
    the other side of a request. A defect usually sits where changed code meets code
    that did not change.
@@ -36,9 +41,25 @@ Work from behaviour, not from lines. For each thing the change makes the system 
 - **Who else can reach it?** Another user, another tenant, a signed-out visitor, an
   operator, a background job. Is every read and write scoped to its owner? Is every
   refusal the right one?
+- **Is untrusted input kept in its lane?** Input from a user, an uploaded file, an
+  external service or a model's output must not reach a query, a shell command, a file
+  path, a prompt, a redirect or the page without validation or escaping. A secret, a
+  credential or another user's data must not reach a log, an error message or a
+  response. An authorization check on a page must also hold on the route behind it.
+- **Are failures visible?** An error caught and dropped, or a fallback that turns a
+  failure into a plausible wrong result, hides the defect from the user and from the
+  logs. Every wait, retry and loop needs a bound, and reaching it must tell someone.
 - **What if things happen at once or out of order?** Two requests or workers together,
   an event that arrives before the row it describes, a stream that ends early, a stop
   that answers before the work is persisted.
+- **Does each piece live where it belongs?** Code for one runtime imported into
+  another (server-only code into a client bundle, I/O or non-deterministic code into a
+  sandboxed or replayed workflow), a private module reached from a public surface, or a
+  second implementation of something that already has an owner breaks a boundary the
+  project relies on.
+- **Does the cost stay bounded?** Work that grows with data a user controls: a query
+  per row, a fetch or list without a limit, a new query path without the index it
+  needs, a payload or prompt that grows without a cap.
 - **Does it survive the deploy?** Rows, migrations, queued messages, workflow histories,
   stored formats and caches written by the old code must still be read correctly by the
   new code. During the roll, the old code must survive the new schema. In durable
@@ -54,16 +75,22 @@ Work from behaviour, not from lines. For each thing the change makes the system 
   when the field is dropped.
 - **For a refactor: is the old implementation gone?** Its re-exports, compatibility
   names and unmigrated callers must not live on beside the new one.
-- **Would the new or changed tests fail if their behaviour broke?** A test that builds
-  its own input instead of going through the real path, or asserts what its mock
-  supplied, is green for the wrong reason. Report it when the behaviour it claims to
-  protect is then actually unprotected. A skipped or focused test (`.skip`, `.only`)
+- **Would the tests relied on for the changed behaviour fail if it broke?** Inspect
+  the existing tests that cover it as well as the new or changed ones, and follow each
+  test's input back to the production code that produces it. A test that builds its
+  own input instead of going through the real path, or asserts what its mock
+  supplied, is green for the wrong reason; an unchanged test of a changed path is the
+  likeliest place for that to hide. Report it when the behaviour it claims to protect
+  is then actually unprotected. A skipped or focused test (`.skip`, `.only`)
   silently stops protecting its path. A changed behaviour that no test would notice
   breaking is a finding too: minor, unless it guards one of the project's contracts.
 
-Confirm a suspicion before you report it. Read the code that would prevent it. When a
-narrow command settles the question, run it: one test file, a grep, a query against the
-worktree's running stack. Do not run the whole suite; the parent does that.
+On a first round, work through the whole change, not until the first findings. On a
+follow-up round, review the delta you are given, the earlier findings and the
+contracts the delta touches; earlier coverage stands for what did not change. Confirm a suspicion before
+you report it. Read the code that would prevent it. When a narrow command settles the
+question, run it: one test file, a grep, a query against the worktree's running stack.
+Do not run the whole suite; the parent does that.
 
 ## What to report
 
@@ -89,6 +116,13 @@ Severity:
 CORRECTNESS REVIEW
 ==================
 Scope: <base>..<working tree>, <n> files
+
+Coverage:
+  Applicable rules: <each rule file -> the changed or affected paths it governs>
+  Read in full: <files>
+  Not read, or only skimmed: <files, and why>
+  Behaviour traced: <each criterion -> its production entry point, the producers and
+    consumers you followed, the tests you inspected, the failure case you examined>
 
 Requirements:
   - <criterion>: met | not met (finding N) | not checkable by reading (why)

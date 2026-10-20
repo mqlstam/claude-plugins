@@ -54,7 +54,11 @@ observable effect (an internal refactor, docs, tooling) skips it; say so in one 
 
 When it is in scope, **start the stack first, in the background**, with the profile
 that serves the touched paths: `/spinup` (`--full` for the heavy sidecars), or the
-command in the project's runtime rule. Never override the stack cap or stop another
+command in the project's runtime rule. **Make every changed service run the current
+working tree** with the project's rebuild or reload procedure: starting a stack reuses
+an image built before the change. Do it again after every fix, and record how
+freshness was established. An answering URL, or a HEAD that matches while changes are
+uncommitted, does not establish it. Never override the stack cap or stop another
 session's stack; at the cap, runtime verification is NOT RUN and the rest of VERIFY
 carries on.
 
@@ -65,13 +69,27 @@ carries on.
 - **The review runs on a model family other than the one that built the change.** A
   model reviewing its own family's output over-credits it (arxiv 2504.03846). Inside
   T3 Code (the `t3-code` MCP tools are available), call `orchestrator_capabilities`
-  and pick an instance of the other family: a `codex` instance when Claude built the
-  change, a `claudeAgent` instance when Codex did. Call `delegate_task` with
-  `target: { providerInstanceId: <that instance>, model: <the first model it lists> }`;
-  for a Codex reviewer add `options: [{ id: "reasoningEffort", value: "high" }]` (the
-  owner's setting; the catalog's default is lower), and check that
-  `orchestrator_capabilities` still lists that option and value. Then `mode: "async"`, `role: "review"`, `isolation: "shared"` (the reviewer must see
-  uncommitted work), a `clientRequestId` unique to this round, and a title such as
+  and pick an enabled instance of the other family by its `driverKind`: `codex` when
+  Claude built the change, `claudeAgent` when Codex did. For a Codex reviewer, the
+  reasoning option goes INSIDE `target` (the owner's setting; the catalog's default is
+  lower), after checking that `orchestrator_capabilities` still lists that option and
+  value:
+
+  ```json
+  {
+    "target": {
+      "providerInstanceId": "<the enabled instance>",
+      "model": "<the first model it lists>",
+      "options": [{ "id": "reasoningEffort", "value": "xhigh" }]
+    },
+    "mode": "async",
+    "role": "review",
+    "isolation": "shared"
+  }
+  ```
+
+  `isolation: "shared"` because the reviewer must see uncommitted work. Add a
+  `clientRequestId` unique to this round and a title such as
   `VERIFY review <slice> r1`. The task text is the body of
   `${CLAUDE_PLUGIN_ROOT}/agents/correctness-reviewer.md` without its frontmatter,
   followed by the review context. Keep the returned `taskId`.
@@ -80,8 +98,9 @@ carries on.
   review ran on the builder's own family.
 
 **b. Runtime verification**, when in scope: the `runtime-verifier` agent with
-`model: "opus"`. Give it the slice, the base, the stack URL, the profile and the
-services that profile leaves out. Launch it as soon as the stack answers. Do not hold
+`model: "opus"`. Give it the slice, the base, the stack URL, the profile, the
+services that profile leaves out, and how each changed service was made to run the
+current code. Launch it as soon as the stack answers and runs that code. Do not hold
 the review back for the stack.
 
 **c. Local validation**, in the background, on the current tree. With a `ship:check`
@@ -96,7 +115,14 @@ Completions arrive as notifications, so never sleep-poll.
 
 ## Step 3 - judge the findings
 
-You are the author. Read every finding against the code.
+You are the author. First compare the review's **Coverage** with the change and with
+the scopes of the project's rules. An applicable rule it did not read, a changed file
+it did not read, or a criterion without a traced production path makes the review
+incomplete: send one more round for exactly what it skipped before you rely on its
+verdict. Coverage adds up across rounds: earlier coverage stands for paths and
+contracts the fixes did not touch, so a follow-up round needs coverage only of its
+delta and of what that delta affects. Pass the previous Coverage with the follow-up
+context. Then read every finding against the code.
 
 - **Real:** fix it. A defect found by running the app first gets a failing regression
   test at the boundary that owns the behaviour; then the fix.
@@ -106,12 +132,18 @@ You are the author. Read every finding against the code.
 
 ## Step 4 - re-check only what changed
 
-- **After a non-trivial fix,** run one new round of the lane that found it. For the
-  review, that is a new `delegate_task` call (new `clientRequestId`) or a new agent,
-  carrying the original brief, the previous findings, your response to each, and the
-  diff since the previous round. For runtime verification, re-check the affected
-  criteria only.
-- **A trivial fix** (one obvious line) needs no re-review.
+- **After a substantive product-code fix, whichever lane found it,** get a targeted
+  correctness review of the fix and the callers it affects: a new `delegate_task` call
+  (new `clientRequestId`) or a new agent, carrying the original brief, the slice, the
+  base, the previous findings, your response to each, and the diff since the previous
+  round. A fix to a runtime finding can introduce the race the runtime re-check does
+  not exercise.
+- **Re-run the runtime criteria** whose implementation or prerequisites the fix
+  changed, on a stack running the fixed code.
+- **Judge "trivial" by what the change can reach, not by its length.** A one-line
+  change to authorization, persistence order, concurrency or workflow history is
+  substantive. Only a fix that cannot change behaviour (a message string, a comment)
+  skips the review.
 - **Either way,** local validation runs again on the final tree.
 
 ## Step 5 - verdict
@@ -119,7 +151,9 @@ You are the author. Read every finding against the code.
 - **READY**: the review has no open blocker or major finding. Runtime verification is
   READY, or was skipped or NOT RUN with the reason stated. Local validation exited `0`
   on the final tree.
-- **NEEDS_FIX**: a real finding is open, or validation failed (exit `1` names the step).
+- **NEEDS_FIX**: a real blocker or major finding is open, or validation failed (exit
+  `1` names the step). Minor findings are listed in the summary with what you did
+  about each.
 - **BLOCKED**: validation refused (exit `2`) for a reason you cannot fix here, or no
   review could run at all. A failed Codex task falls back to the agent; it is not
   BLOCKED by itself.
@@ -133,10 +167,17 @@ Do not stop the stack yourself. Another session may share this worktree and be u
 it; the project's session-end and idle hooks soft-stop it once no live session needs
 it, which a stop from inside one session cannot know.
 
-- **READY** -> write `.claude/.verify-state.json`:
-  `{ "headSha": "<git rev-parse HEAD>", "timestamp": "<ISO 8601>", "verdict": "READY" }`.
-  `/ship` checks it before merging main and committing; those integration steps
-  do not re-arm VERIFY. Tell the user what was fixed, what you rejected and why, the
+- **READY** -> run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`. It
+  writes `.claude/.verify-state.json` with the verdict bound to the exact contents
+  reviewed: every tracked and untracked, non-ignored file, by mode and blob id.
+  `/ship`, `/quickship` and `/merge` run `verify-state.py check` before merging main
+  and committing; committing the reviewed work keeps the verdict, and any other
+  change to the contents makes the check name the changed paths for review. After
+  merging main in they run `verify-state.py integrate`, which accepts the merge only
+  when it is exactly git's clean merge and names anything else for review. A merge of main that applies
+  cleanly does not re-arm VERIFY. A conflict resolved by hand that changes behaviour
+  gets a targeted correctness review of the resolved paths and the contracts they
+  touch before this verdict counts again. Tell the user what was fixed, what you rejected and why, the
   runtime evidence, and anything NOT RUN. Suggest `/ship`.
 - **NEEDS_FIX** -> fix in this chat, then step 4.
 - **BLOCKED** -> surface it to the user. Do not ship.
