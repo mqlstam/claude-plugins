@@ -41,15 +41,25 @@ Work from behaviour, not from lines. For each thing the change makes the system 
   that answers before the work is persisted.
 - **Does it survive the deploy?** Rows, migrations, queued messages, workflow histories,
   stored formats and caches written by the old code must still be read correctly by the
-  new code. During the roll, the old code must survive the new schema.
+  new code. During the roll, the old code must survive the new schema. In durable
+  workflow code, adding, removing or reordering a step that is recorded in history (an
+  activity, timer, wait, signal or child workflow) changes what a running execution
+  replays: it needs the project's version gate and a replay of a history recorded
+  before the change.
 - **Is what the user sees live the same as what they see after a reload?** Ask this
-  wherever the change renders something from a stream or from transient state.
+  wherever the change renders something from a stream or from transient state. A value
+  computed on the client while streaming, a renderer fallback that hides a missing
+  field, or persisting only the final text of a structured part all diverge on reload.
+  A new field the user sees needs a test through the real conversion path that fails
+  when the field is dropped.
 - **For a refactor: is the old implementation gone?** Its re-exports, compatibility
   names and unmigrated callers must not live on beside the new one.
 - **Would the new or changed tests fail if their behaviour broke?** A test that builds
   its own input instead of going through the real path, or asserts what its mock
   supplied, is green for the wrong reason. Report it when the behaviour it claims to
-  protect is then actually unprotected.
+  protect is then actually unprotected. A skipped or focused test (`.skip`, `.only`)
+  silently stops protecting its path. A changed behaviour that no test would notice
+  breaking is a finding too: minor, unless it guards one of the project's contracts.
 
 Confirm a suspicion before you report it. Read the code that would prevent it. When a
 narrow command settles the question, run it: one test file, a grep, a query against the
