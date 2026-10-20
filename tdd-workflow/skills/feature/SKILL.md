@@ -98,7 +98,7 @@ mutated and which test went red; VERIFY and the PR both want it.
 | 1 | SPEC   | Types, API contract, acceptance criteria from the slice  | [phases/01-spec.md](phases/01-spec.md)      |
 | 2 | BUILD  | Tests + implementation together (or `--layers` fan-out)  | [phases/02-build.md](phases/02-build.md)    |
 | 3 | WIRE   | Connect layers, add routing                              | [phases/03-wire.md](phases/03-wire.md)      |
-| 4 | VERIFY | Parent scopes the diff, then launches the specialists    | [phases/04-verify.md](phases/04-verify.md)  |
+| 4 | VERIFY | Independent review + runtime check, beside local checks  | [phases/04-verify.md](phases/04-verify.md)  |
 
 When entering a phase, read its detail file.
 

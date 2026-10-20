@@ -5,7 +5,7 @@ never infer the commands from a remote branch. For shipping, integrate with
 `git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main`,
 then validate the merged tree. The explicit subject satisfies conventional commit
 hooks; keep those hooks enabled.
-For VERIFY, run after specialists finish.
+For VERIFY, run beside the read-only review, and again on the tree after any fix.
 
 ## How to run the validation (read this before step 3)
 

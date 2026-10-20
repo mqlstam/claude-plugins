@@ -30,7 +30,9 @@ Three things DID earn their cost, and they are the methodology now:
    you cannot say what it would catch, it is not a test.
 2. **Mutation proof.** Revert the line, watch the named test go red, restore, watch it
    go green. A test that passes with and without the change is decoration.
-3. **VERIFY.** The parallel, scope-gated specialist fan-out over the finished diff.
+3. **VERIFY.** An independent correctness review of the finished diff and, when the
+   change is observable, a check that uses it on a real stack, both beside the
+   local checks.
 
 So: **write the test and the implementation together**, at the granularity the
 behaviour actually has. Fan out (`--layers`) only when the slice spans surfaces that
@@ -97,7 +99,7 @@ Reach for it before reaching for another grep-shaped gate.
 ## Local checks and release gates
 
 Read the checkout's own `package.json`. Where it declares `ship:check`, VERIFY
-runs that fast local lane after the specialists finish. /ship checks VERIFY on
+runs that fast local lane beside the review, and again after any fix. /ship checks VERIFY on
 its original HEAD, commits, merges origin/main in and runs `pnpm ship:check` on
 the integrated tree. Integration alone does not re-arm VERIFY. The model may add
 coverage with a reason, never remove the automatic floor.

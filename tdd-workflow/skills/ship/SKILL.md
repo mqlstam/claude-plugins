@@ -34,7 +34,7 @@ Stay on this branch; use a feature branch for /ship. Main uses /quickship.
    Resolve conflicts in this branch, preserving both changes, and finish the merge
    commit with that same conventional subject.
    Keep commit hooks enabled. Do not rewrite history or force-push.
-   An ordinary integration conflict does not restart the specialist workflow;
+   An ordinary integration conflict does not restart VERIFY;
    substantive new feature work does. Local validation below checks the merged tree.
 
 5. **Local validation.** Read the checkout's own `package.json` after the merge.

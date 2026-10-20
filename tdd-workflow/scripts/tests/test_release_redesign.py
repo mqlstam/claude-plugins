@@ -77,7 +77,7 @@ class DirectReleaseTest(unittest.TestCase):
 class ReleaseRedesignContractTest(unittest.TestCase):
     def test_version_and_no_retired_mechanisms(self):
         manifest = json.loads(read(os.path.join(ROOT, ".claude-plugin", "plugin.json")))
-        self.assertEqual(manifest["version"], "1.5.0")
+        self.assertEqual(manifest["version"], "1.6.0")
         for relative in ("skills/ship/SKILL.md", "skills/ship/generic.md", "skills/merge/SKILL.md", "skills/quickship/SKILL.md",
                          "skills/feature/phases/04-verify.md", "skills/refactor/phases/05-verify.md",
                          "skills/tdd-methodology/SKILL.md", "scripts/instance-manager.py",
@@ -106,11 +106,27 @@ class ReleaseRedesignContractTest(unittest.TestCase):
         self.assertLess(text.index("endoxia/main-health"), text.index("**A run that already builds it.**"))
 
     def test_verify_uses_fast_check_and_has_no_rearming_on_main_merge(self):
-        for relative in ("skills/feature/phases/04-verify.md", "skills/refactor/phases/05-verify.md"):
-            text = read(os.path.join(ROOT, relative))
-            self.assertIn("pnpm ship:check", text)
-            self.assertIn("before merging main", text)
-            self.assertIn("generic.md", text)
+        text = read(os.path.join(ROOT, "skills/feature/phases/04-verify.md"))
+        self.assertIn("pnpm ship:check", text)
+        self.assertIn("before merging main", text)
+        self.assertIn("generic.md", text)
+        refactor = read(os.path.join(ROOT, "skills/refactor/phases/05-verify.md"))
+        self.assertIn("skills/feature/phases/04-verify.md", refactor)
+
+    def test_verify_launches_only_agents_that_exist(self):
+        text = read(os.path.join(ROOT, "skills/feature/phases/04-verify.md"))
+        for agent in ("correctness-reviewer", "runtime-verifier"):
+            self.assertIn(agent, text)
+            self.assertTrue(os.path.isfile(os.path.join(ROOT, "agents", agent + ".md")), agent)
+        retired = ("code-quality-reviewer", "jit-e2e-author", "rehydration-checker",
+                   "temporal-checker", "dead-code-finder")
+        for directory, _, files in os.walk(os.path.join(ROOT, "skills")):
+            for name in files:
+                body = read(os.path.join(directory, name))
+                for agent in retired:
+                    self.assertNotIn(f"`{agent}`", body, os.path.join(directory, name))
+        for agent in retired:
+            self.assertFalse(os.path.exists(os.path.join(ROOT, "agents", agent + ".md")), agent)
 
 
 class MergePreparationContractTest(unittest.TestCase):

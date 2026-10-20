@@ -38,7 +38,7 @@ module by module. Not a per-layer test-writer fan-out, and not a per-module migr
 Measured position, not preference: a controlled study plus this user's own session data
 (**8-10× the token volume, 46 sub-agents in a session against 1**) found no quality gain
 from rigid red-green sequencing or per-layer builder agents. What earns its cost —
-tests as the contract, mutation proof, VERIFY, and the dead-code sweep — is kept in full.
+tests as the contract, mutation proof and VERIFY — is kept in full.
 
 The ANALYZE fan-out is different and stays: `dependency-mapper`, `caller-finder`,
 `test-scanner` and `impact-assessor` are **read-only searches over disjoint questions**,
@@ -78,7 +78,7 @@ Phase 2: TEST  ─── single agent (--layers to fan out)
 Phase 3: REFACTOR ─ sequential (dependencies)
 Phase 4: MIGRATE ── single agent (--layers to fan out)
 
-Phase 5: VERIFY ─── parent scopes the diff, then launches only what the diff warrants
+Phase 5: VERIFY ─── the feature workflow's VERIFY, told what the refactor replaces
 ```
 
 ## Phases
@@ -89,7 +89,7 @@ Phase 5: VERIFY ─── parent scopes the diff, then launches only what the di
 | 2 | TEST     | Only with `--layers`         | [phases/02-test.md](phases/02-test.md)        |
 | 3 | REFACTOR | Never                        | [phases/03-refactor.md](phases/03-refactor.md)|
 | 4 | MIGRATE  | Only with `--layers`         | [phases/04-migrate.md](phases/04-migrate.md)  |
-| 5 | VERIFY   | Scope-gated by the parent    | [phases/05-verify.md](phases/05-verify.md)    |
+| 5 | VERIFY   | Review + runtime check       | [phases/05-verify.md](phases/05-verify.md)    |
 
 When entering a phase, read its detail file.
 

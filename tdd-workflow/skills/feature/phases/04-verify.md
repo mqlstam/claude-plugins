@@ -1,127 +1,134 @@
-# Phase 4: VERIFY (Parallel)
+# Phase 4: VERIFY
 
 ## Goal
-Independent, parallel verification. **You (the parent) decide which specialists run,
-from the diff, before launching anything, and you run the gate yourself once they
-are done.** Specialists run in the same worktree as the parent (no
-`isolation: "worktree"` flag — known broken when nested, see Claude Code issues
-#47548 #27881 #50850 #39886 #41010).
 
-## Why parallel + multi-specialist
+Two independent checks of the finished change, run in parallel with the project's
+local validation:
 
-Single-reviewer sequential review leaves 30-40% of bug detection on the table per
-CodeX-Verify (arxiv 2511.16708). Mixing model families neutralizes the documented
-"self-affirming review" failure (arxiv 2504.03846). Meta JIT testing (4× bug
-detection) requires a new diff-aware spec per slice — that is the `jit-e2e-author`
-lane.
+- **Correctness review**, always: a fresh context reads the diff against the slice,
+  read-only, preferably on another model family.
+- **Runtime verification**, when the diff changes something a user or caller can
+  observe: the change is used on the worktree's own stack, with evidence.
 
-## Step 1 — scope the diff YOURSELF, and print what you are not launching
+Agents run in the parent's checkout (no `isolation: "worktree"`; nested worktree
+isolation is known broken, Claude Code issues #47548 #27881 #50850 #39886 #41010).
 
-```bash
-git diff --name-only origin/main...HEAD
-git diff --name-only HEAD          # uncommitted work counts too
-```
+## Why this shape
 
-Decide from those paths. Measured over three weeks: `temporal-checker` returned
-`NO_OP` on **52%** of its launches and `rehydration-checker` on **42%** — half of
-those launches paid a full agent start-up to read a diff and conclude they had
-nothing to do. You already have the diff; deciding here costs nothing.
+Measured over 2026-09-01 .. 10-20 (196 specialist reports classified, 811 runs timed):
 
-| Specialist              | Model  | Launch when the diff touches                                                                                     |
-| ----------------------- | ------ | ---------------------------------------------------------------------------------------------------------------- |
-| `code-quality-reviewer` | sonnet | **always**                                                                                                       |
-| `jit-e2e-author`        | opus   | user-facing surface: `app/`, `pages/`, `*.tsx`, `middleware.ts`, API route files, auth/session code             |
-| `rehydration-checker`   | opus   | chat persistence or chat-visible rendering: `chat_turns`, `UIMessage`, message-part mappers/renderers, `features/chat-*` |
-| `temporal-checker`      | haiku  | `packages/core/src/workflows/`, `packages/core/src/temporal/`, activity definitions, `workflow-versioning`        |
-| `dead-code-finder`      | sonnet | feature workflow: never (refactor only)                                                                          |
+- **Defects came from an independent reader and from running the app.** The reviewer
+  found a concrete behavioural defect in 31% of its runs (42% in October): races,
+  isolation leaks, unmet requirements, deploys that would not work. All 7 defects the
+  e2e specialist found came from driving the app in a browser, not from the spec it
+  wrote.
+- **The checklist lanes rarely did.** the Temporal checker came back clean 27 of 35
+  times, and its domain already has static checks. the dead-code finder found nothing
+  real in 10 of 10. In 21 of 70 reviews the most serious finding was style that lint
+  already owns, and each such finding still cost a fix-and-rerun round.
+- **Rounds, not waiting, made VERIFY slow.** Median 70 minutes in about 2 rounds. A
+  parallel round lasts as long as its slowest agent, and every non-defect finding buys
+  another round.
 
-Print one line per specialist you skip, with the reason:
+So VERIFY keeps the two parts that find defects and drops the per-concern specialists.
+What those specialists knew (replay across a deploy, live equals reload, an old
+implementation left behind, a test that is green for the wrong reason) lives on as
+method in the two briefs. A new concern belongs in a brief as method, or in a
+deterministic check. It does not get its own agent.
 
-```
-skipping temporal-checker  — no files under packages/core/src/{workflows,temporal}/
-skipping rehydration-checker — no chat persistence or rendering paths in the diff
-```
+## Step 1 - prepare
 
-Each specialist keeps its own `NO_OP` guard as defence in depth — a path heuristic
-can be wrong, and a specialist that disagrees with your scoping should say so rather
-than invent work.
+**The review context.** Collect:
 
-## Step 2 — if e2e is in scope, start the stack FIRST, in the background
+- the slice doc path and its acceptance criteria;
+- the base, `git merge-base HEAD origin/main` (uncommitted work is part of the change);
+- what you ran: the tests, the mutation record, what you verified yourself;
+- decisions you took on purpose and why.
 
-`jit-e2e-author` needs a running stack, and its median run is 12.3 min. The recurring
-failure was: launch it, it works for minutes, THEN discovers no stack is running and
-asks for `/spinup`. So the order is fixed:
+Pass facts, not your reasoning. The review's value is that it does not share your
+view of the code.
 
-1. **Start the stack in the background** (do not block on it):
-   ```bash
-   bash scripts/wt.sh docker compose up -d        # per-worktree private stack
-   ```
-   Reference, when present in the repo: `scripts/worktree-stack-cap.sh` (refuses a
-   new stack when the machine's cap is reached), `scripts/worktree-chrome.sh`, and a
-   light compose profile if one is defined. Tolerate their absence — fall back to
-   the plain compose up.
-2. **Launch every static specialist immediately, in parallel.** They never touch the
-   runtime and must not wait for it.
-3. **Launch `jit-e2e-author` only once the stack answers** on `$WT_BFF_PORT` (default
-   3000).
-4. **If the stack cannot come up** — the cap is reached, a first-time image build
-   would take longer than this round, compose errors — say so plainly and record the
-   round as **e2e NOT RUN**. Do not report it as a pass, and do not let it block the
-   static verdicts.
+**Whether runtime verification is in scope.** It is when the change alters anything
+observable through a page, an API route, a job, a message or a mail. A change with no
+observable effect (an internal refactor, docs, tooling) skips it; say so in one line.
 
-There is no `.claude/verify-runtime.lock`: each worktree runs its own private stack.
+When it is in scope, **start the stack first, in the background**, with the profile
+that serves the touched paths. Follow the project's runtime rule for the command, the
+stack cap and the profiles; fall back to `bash scripts/wt.sh docker compose up -d`.
 
-## Step 3 — the judges, then the gate
+## Step 2 - launch in one message
 
-**Wave 1, in ONE message:** every in-scope specialist. Each is single-shot; they
-cannot ask the user questions mid-run. They read, judge, and may fix trivial issues
-in place.
+**a. Correctness review.**
 
-**Wave 2, once wave 1 has returned and its fixes are in: run local validation
-on that final tree yourself.** Read this checkout's own `package.json`. With a
-`ship:check` script run `pnpm ship:check`, adding `--add-tests`, `--add-package`
-or `--add-checks` only with `--reason` for a boundary automatic selection misses.
-Without it follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`, including its
-assertion-only sweep. Never narrow the selected checks.
+- **The review runs on a model family other than the one that built the change.** A
+  model reviewing its own family's output over-credits it (arxiv 2504.03846). Inside
+  T3 Code (the `t3-code` MCP tools are available), call `orchestrator_capabilities`
+  and pick an instance of the other family: a `codex` instance when Claude built the
+  change, a `claudeAgent` instance when Codex did. Call `delegate_task` with
+  `target: { providerInstanceId: <that instance>, model: <the first model it lists> }`,
+  `mode: "async"`, `role: "review"`, `isolation: "shared"` (the reviewer must see
+  uncommitted work), a `clientRequestId` unique to this round, and a title such as
+  `VERIFY review <slice> r1`. The task text is the body of
+  `${CLAUDE_PLUGIN_ROOT}/agents/correctness-reviewer.md` without its frontmatter,
+  followed by the review context. Keep the returned `taskId`.
+- **Otherwise**, or when the delegated task fails to start: the `correctness-reviewer`
+  agent with `model: "opus"` and the review context, and say in the summary that the
+  review ran on the builder's own family.
 
-Commands that can exceed about 8 minutes use `run_in_background: true`; wait for
-the completion notification. Do not sleep-poll. Specialists may edit the tree, so
-validation runs after their final fixes. Any new fixes require validation again.
+**b. Runtime verification**, when in scope: the `runtime-verifier` agent with
+`model: "opus"`. Give it the slice, the base, the stack URL, the profile and the
+services that profile leaves out. Launch it as soon as the stack answers. Do not hold
+the review back for the stack.
 
-## Step 4 — collect verdicts
+**c. Local validation**, in the background, on the current tree. With a `ship:check`
+script in this checkout's `package.json`, run `pnpm ship:check`. Add `--add-tests`,
+`--add-package` or `--add-checks` only with `--reason`, for a boundary the automatic
+selection misses. Never narrow it. Without `ship:check`, follow
+`${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`, including its assertion-only sweep.
+The reviewers do not write to the tree, so this run is valid unless a fix lands later.
 
-- `code-quality-reviewer` → READY | NEEDS_ATTENTION | NEEDS_WORK
-- `jit-e2e-author` → READY | NEEDS_ATTENTION | NO_OP | BLOCKED | NOT_RUN
-- `rehydration-checker` → READY | NEEDS_ATTENTION | BLOCKED | NO_OP
-- `temporal-checker` → READY | NEEDS_ATTENTION | NEEDS_WORK | NO_OP
-- local validation → `0` pass; `1` fail (names the failed step); `2` refused:
-  fix the named environment issue and retry. An interrupted command or any other
-  nonzero exit is not a pass. Surface a cause you cannot resolve as BLOCKED.
+Do not edit the tree while these run. Long commands use `run_in_background: true`.
+Completions arrive as notifications, so never sleep-poll.
 
-## Step 5 — aggregate
+## Step 3 - judge the findings
 
-- **READY** — every launched specialist returned READY/NO_OP and the gate passed
-- **NEEDS_FIX** — any returned NEEDS_WORK / NEEDS_ATTENTION on a non-trivial issue, or
-  the gate failed
-- **BLOCKED** — a specialist could not do its job (not the same as NOT_RUN), or the
-  gate refused for a reason you cannot fix here. Surface it.
+You are the author. Read every finding against the code.
 
-`NOT_RUN` for e2e does not block READY, but it MUST appear in the summary you give
-the user. A verification that did not happen is reported, never absorbed.
+- **Real:** fix it. A defect found by running the app first gets a failing regression
+  test at the boundary that owns the behaviour; then the fix.
+- **Not real:** reject it with a one-line reason (the scenario cannot occur because
+  ...). Keep the reason for the summary and for the next round.
+- **Style or speculation:** do not act on it.
 
-## After all return
+## Step 4 - re-check only what changed
 
-- **READY** → write `.claude/.verify-state.json` with the current `git rev-parse HEAD`
-  and timestamp. `/ship` checks this before merging main or committing, so those
-  integration steps do not re-arm VERIFY. Suggest `/ship`.
-- **NEEDS_FIX** → fix in this chat, re-run **only** the failing judge, then the gate
-  (wave 2) once more on the fixed tree.
-- **BLOCKED** → surface to the user. Do not ship.
+- **After a non-trivial fix,** run one new round of the lane that found it. For the
+  review, that is a new `delegate_task` call (new `clientRequestId`) or a new agent,
+  carrying the original brief, the previous findings, your response to each, and the
+  diff since the previous round. For runtime verification, re-check the affected
+  criteria only.
+- **A trivial fix** (one obvious line) needs no re-review.
+- **Either way,** local validation runs again on the final tree.
 
-## Completion
+## Step 5 - verdict
 
-- Every in-scope specialist returned, and every skipped one was named with its reason
-- The gate ran on the final tree
-- Aggregated verdict produced
-- `.claude/.verify-state.json` written if READY
-- Mark verify task as completed; suggest `/ship` if READY
+- **READY**: the review has no open blocker or major finding. Runtime verification is
+  READY, or was skipped or NOT RUN with the reason stated. Local validation exited `0`
+  on the final tree.
+- **NEEDS_FIX**: a real finding is open, or validation failed (exit `1` names the step).
+- **BLOCKED**: validation refused (exit `2`) for a reason you cannot fix here, or no
+  review could run at all. A failed Codex task falls back to the agent; it is not
+  BLOCKED by itself.
+
+An interrupted command or any other nonzero exit is not a pass. NOT RUN is never a
+pass: it always appears in the summary to the user.
+
+## After the verdict
+
+- **READY** -> write `.claude/.verify-state.json`:
+  `{ "headSha": "<git rev-parse HEAD>", "timestamp": "<ISO 8601>", "verdict": "READY" }`.
+  `/ship` checks it before merging main and committing; those integration steps
+  do not re-arm VERIFY. Tell the user what was fixed, what you rejected and why, the
+  runtime evidence, and anything NOT RUN. Suggest `/ship`.
+- **NEEDS_FIX** -> fix in this chat, then step 4.
+- **BLOCKED** -> surface it to the user. Do not ship.
