@@ -14,9 +14,9 @@ tag (or manual dispatch), never on a push to `main`. Since Endoxia slice 603 a
 tag stops at staging (`https://staging.endoxia.ai`); production is a separate,
 manual promote of what staging serves (`/promote`, or `gh workflow run
 promote.yml -f sha=<sha>`), with no rebuild. Since slice 806 a staging deploy
-builds, scans, integrates and boots, and runs no unit lane: the land queue gated
-each merge, and the whole suite runs once, on the commit a promote takes to
-production.
+builds, scans, integrates and boots, and runs no unit lane: fast local checks precede each merge and short main CI judges the merged range.
+The whole suite gates the exact production SHA at promote; a verified green
+verdict for that SHA may be reused.
 
 **A deploy joins the train.** The workflow's concurrency group lets one run roll
 and one wait, and a newer tag replaces the waiting one. So `/deploy` first asks
@@ -47,6 +47,13 @@ as success and used up the approval on 2026-10-07).
 
 2. **The commit.** `<SHA>` is the full 40-character SHA from "main @ origin".
    Make it local for step 3: `git fetch --quiet origin main`.
+
+Before joining or tagging, read the newest health status for this exact SHA:
+   `gh api repos/:owner/:repo/commits/<SHA>/statuses --jq '[.[] | select(.context == "endoxia/main-health")][0] // null'`.
+   The statuses API is newest first. `failure` or `error` means STOP: this commit
+   cannot deploy to staging; name the failing status and its target URL. `pending`
+   or no matching status means warn that health is unconfirmed, then continue.
+   An API error is not a green status: report health as unknown and warn.
 
 3. **A run that already builds it.**
    `gh run list --workflow deploy.yml --limit 20 --json databaseId,status,headSha,createdAt,event --jq '.[] | select(.status != "completed")'`

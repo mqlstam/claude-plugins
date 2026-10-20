@@ -87,37 +87,27 @@ Reach for it before reaching for another grep-shaped gate.
 | --------------------------- | -------------------------------------------------------------- |
 | `/feature <name> [--layers]`| New feature; single-agent build by default                     |
 | `/refactor <name> [--layers]`| Refactor; ANALYZE fans out, the build does not                |
-| `/ship`                     | Commit, gate the change, push, PR, land on main                |
-| `/quickship`                | Same gates, straight to main; `/ship` where there is a land queue |
-| `/merge`                    | Squash-merge an existing PR, through the land queue where there is one |
+| `/ship`                     | Commit, merge main, check the change, push, PR, squash-merge                |
+| `/quickship`                | Same local checks, push directly to main |
+| `/merge`                    | Squash-merge an existing PR directly |
 | `/deploy`                   | Release main via a `deploy-*` tag — the only thing that deploys (Endoxia: to STAGING; production is `/promote`) |
 | `/spinup` / `/teardown`     | This worktree's private runnable stack                         |
 | `/validate`                 | Check slice completeness                                       |
 
-## Gate economics (why /ship is fast after a green VERIFY)
+## Local checks and release gates
 
-Where the repo's `main` lands through a queue (`ship:gate` and `ship:land`, Endoxia,
-slice 806):
+Read the checkout's own `package.json`. Where it declares `ship:check`, VERIFY
+runs that fast local lane after the specialists finish. /ship checks VERIFY on
+its original HEAD, commits, merges origin/main in and runs `pnpm ship:check` on
+the integrated tree. Integration alone does not re-arm VERIFY. The model may add
+coverage with a reason, never remove the automatic floor.
 
-- **The gate is proportional to the change.** A deterministic floor picks what the
-  change reaches (affected lint and typecheck, the checks whose inputs changed, the
-  tests that import a changed file); the model only ADDS what no import reaches, with
-  a reason.
-- **A result belongs to a tree, machine-wide.** VERIFY's run records the tree it
-  proved and the merge base it was judged from; `/ship`, `pre-push` and the land
-  queue reuse it for that identical tree, in any worktree. When main moved since,
-  only the checks that read main's tip run again.
-- **Gates queue for the machine.** A gate with heavy work takes a slot, and the
-  measured default is one slot: two gates side by side finished no sooner than one
-  after the other and turned timing-sensitive tests red. So those gates run one at a
-  time, FIFO by ticket, and a gate with nothing heavy to run takes no slot. What
-  makes it fast is that each gate is small.
-- **One way onto main: the land queue.** It tests the merged result once and lands in
-  order, so a branch is never merged with main and re-tested because another PR
-  landed.
-- **The whole suite runs once**, on the exact commit a promote takes to production.
+Each worktree runs independently. Push, open the PR and squash-merge directly,
+matching its exact head. Main's short CI checks the merged range; a red main is
+reported and fixed forward through an ordinary ship. It does not block ships.
+Staging refuses a known red SHA and warns on unknown health. Promote runs the
+whole suite on the exact production SHA, reusing a verified green when available.
 
-Elsewhere `/ship` runs the repo's own lint, typecheck, test and check commands.
-
-And never `sleep`-poll a long command. Run it with `run_in_background: true` and wait
-for the completion notification — polling was **46% of measured tool wall-clock**.
+Repositories without `ship:check` keep their own lint, typecheck, formatting,
+test, build and assertion commands. Merge main in rather than rewriting history.
+Never sleep-poll a long command: background it and wait for its completion notice.

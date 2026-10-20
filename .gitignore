@@ -1,0 +1,2 @@
+# Local review state belongs to its session, never the plugin release.
+.claude/.verify-state.json

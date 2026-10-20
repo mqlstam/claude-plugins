@@ -90,7 +90,7 @@ class MaskedStatusTest(unittest.TestCase):
         self.assertIn("`$?`", decide("pnpm -s check:markers | tail -5\necho exit=$?"))
         self.assertIn("`if`", decide("if pnpm build 2>&1 | tail -3; then echo ok; fi"))
         self.assertIn("`||`", decide("pnpm install --offline 2>&1 | tail -5 || pnpm install"))
-        self.assertIn("`&&`", decide("pnpm format:check |& tail -2 && node scripts/gate-record.mjs record format:check pass"))
+        self.assertIn("`&&`", decide("pnpm format:check |& tail -2 && node scripts/check-summary.mjs format:check"))
 
     def test_reading_through_a_pipe_is_fine(self):
         self.assertIsNone(decide("pnpm test 2>&1 | tail -20"))

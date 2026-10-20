@@ -1,10 +1,9 @@
 ---
 name: quickship
-description: Validate and push directly to main without a PR; where the repo lands through a queue, it is /ship. Runs when the user types /quickship, or after /approve quickship (one run).
-release-actions: push-main, merge
-land-queue: only
+description: Validate, commit, merge origin/main and push directly to main without a PR. Runs when the user types /quickship, or after /approve quickship (one run).
+release-actions: push-main
 argument-hint: "[commit message]"
-allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/land_queue.py *)
+allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *), Bash(jq *)
 ---
 
 # Quick Ship
@@ -13,86 +12,32 @@ allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *),
 
 - Branch: !`git branch --show-current`
 - Status: !`git status --short`
-- Diff stats: !`git diff --stat HEAD`
 - Worktree: !`git rev-parse --show-toplevel`
-- Primary worktree: !`git worktree list --porcelain | head -2 | tail -1 | awk '{print $2}'`
-- Land queue: !`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/land_queue.py --fetch`
+- Worktrees: !`git worktree list --porcelain`
 
-How `main` lands decides the flow, not this checkout: the `Land queue` line fetched
-`origin main` and read `origin/main`'s `package.json`, because a checkout older than
-the queue has no `ship:land` of its own.
-
-- `queue` or `merge-main-first`, on `main` → STOP: "Here the land queue is the only
-  way onto main: run /ship from a worktree branch."
-- `merge-main-first` on a branch → STOP: "main lands through the queue now;
-  `git merge origin/main` first, then /ship."
-- `queue` on a branch → "Land queue `queue`" below.
-- `unknown: …`, or anything else (no verdict, an error) → STOP and report the line:
-  without knowing how main lands, nothing is pushed.
-- `none` → "Land queue `none`" below.
-
-## Land queue `queue`: /quickship is /ship
-
-Where `main` lands through a queue (Endoxia since slice 806), the queue is the only
-way onto `main`: nothing is pushed to `main` directly, and a PR is what the queue
-lands; the release gate refuses a push to main or a bare merge under this skill
-there. So read `${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md` and follow it from its
-Context (run those commands yourself: the plugin root its paths start from is
-`${CLAUDE_PLUGIN_ROOT}`, and its own skill directory `${CLAUDE_PLUGIN_ROOT}/skills/ship`),
-with `$ARGUMENTS` as the commit subject. This /quickship's approval covers its land.
-
-Stop reading here. Everything below is for a repo without a land queue.
-
-## Land queue `none`: straight to main
-
-Pushes straight to main. Skips the PR + auto-merge dance that `/ship` runs.
-Use only when CI is disabled, branch protection is unconfigured, and the
-audit trail of a PR is not required. For most agentic-development setups,
-prefer `/ship` — pushing agent-generated code direct to main without a PR
-is the documented highest-risk pattern.
-
-## Validation
-
-Based on the context above:
-
-1. **Must be on main, in the primary worktree.** This skill commits directly to
-   main; a worktree session never switches branches, and git refuses to check out
-   `main` where another worktree holds it. If `Branch` ≠ `main` or `Worktree` ≠ `Primary worktree`,
-   STOP with: "Use /ship from a feature branch or worktree; /quickship only runs
-   from the main checkout."
-
-2. **No changes** — if there are no changes to commit, STOP.
-
-3. **VERIFY-state gate** — same as /ship. The parent skill's VERIFY phase must
-   have run on the current diff:
-
-   ```bash
-   if [ ! -f .claude/.verify-state.json ]; then
-     echo "VERIFY phase has not run. Complete it (re-enter /feature or /refactor) before /quickship."
-     exit 1
-   fi
-   verified_sha=$(jq -r .headSha .claude/.verify-state.json 2>/dev/null || cat .claude/.verify-state.json)
-   if [ "$verified_sha" != "$(git rev-parse HEAD)" ]; then
-     echo "VERIFY-state is stale ($verified_sha != HEAD). Re-run VERIFY before /quickship."
-     exit 1
-   fi
-   ```
-
-4. **The gate: the same as `/ship`'s.** Read
-   `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md` and follow its "How to run the
-   gate" and its "Validation" (steps 3-5), then come back here: the repo's own lint,
-   typecheck, format check, test and build, then its `check:*` / `env:*` scripts,
-   each its own call, the long ones in the background. STOP on any failure.
-
-## Ship (do everything below in a SINGLE message)
-
-1. Stage all relevant changed files
-2. Create a commit using conventional format (`feat:`, `refactor:`, `fix:`)
-   - If $ARGUMENTS provided, use as commit message
-3. Push to main: `git push origin main`
-
-Do all of the above in a single response. Do not send any other text besides
-the tool calls.
+1. **Only main, in the primary checkout.** Otherwise STOP and use /ship from the
+   feature branch. Never switch branches in a shared tree. If nothing changed, STOP.
+2. **VERIFY before changing HEAD.** `.claude/.verify-state.json` must exist and its
+   `headSha` must equal `git rev-parse HEAD`. Otherwise complete VERIFY first.
+   Check before committing and merging main, so integration does not re-arm VERIFY.
+3. **Commit.** Stage relevant changes and create a conventional commit, using
+   $ARGUMENTS when supplied. Keep unrelated changes out.
+4. **Integrate.** `git fetch origin main`, then
+   `git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main`.
+   Resolve conflicts and finish the merge with that same conventional subject.
+   Keep commit hooks enabled. Never rewrite history or force-push.
+5. **Validate the merged tree.** Read this checkout's own `package.json` after
+   merging. With `ship:check`, run `pnpm ship:check`; add tests, packages or checks
+   only with a reason, never narrow its floor. Exit `0` passes; `1` fails; `2`
+   refuses the environment. Resolve the named cause; no other exit is a pass.
+   Without the script follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`.
+   Background calls that can exceed about 8 minutes and wait for notification.
+6. **Report main health.** Read the newest `endoxia/main-health` status on origin's
+   main tip; print red, pending or missing status and whether this change fixes a
+   red. A red main does not block this push.
+7. **Push.** `git push origin main`. A non-fast-forward rejection means main moved:
+   fetch, merge and validate again, then retry. Do not restart VERIFY just for that
+   integration. Confirm the pushed commit; this does not deploy.
 
 ## After the push
 

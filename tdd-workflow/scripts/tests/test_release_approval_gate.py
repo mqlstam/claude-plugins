@@ -14,7 +14,7 @@ SPEC.loader.exec_module(gate)
 
 ACTIONS = {
     "ship": ("merge",),
-    "quickship": ("merge", "push-main"),
+    "quickship": ("push-main",),
     "merge": ("merge",),
     "deploy": ("deploy-tag",),
     "promote": ("dispatch",),
@@ -23,19 +23,12 @@ ACTIONS = {
 }
 
 
-# The skills that land only through a land queue where main has one (`land-queue: only`).
-QUEUE_ONLY = {"ship", "quickship", "merge"}
-
-
 class FakeResolver(gate.SkillResolver):
     def __init__(self):
         super().__init__("/repo")
 
     def actions(self, name):
         return ACTIONS.get(gate.bare(name), ())
-
-    def land_queue_only(self, name):
-        return gate.bare(name) in QUEUE_ONLY
 
 
 def on_branch(name):
@@ -96,9 +89,9 @@ class Transcript:
         kw.setdefault("output", "Command running in background with ID: b1. Output is being written to: "
                                 "/private/tmp/claude-501/x/tasks/b1.output. You will be notified when it completes.")
         return self.tool("Bash", {"command": command, "run_in_background": True,
-                                  "description": "Land the PR"}, **kw)
+                                  "description": "Merge the PR"}, **kw)
 
-    def notify(self, tid, status, exit_code=None, description="Land the PR", sidechain=False):
+    def notify(self, tid, status, exit_code=None, description="Merge the PR", sidechain=False):
         """The notice Claude Code writes when a background command ends, in its words."""
         if status == "failed":
             summary = f'Background command "{description}" failed with exit code {exit_code}'
@@ -140,11 +133,7 @@ def no_github(run_id, _target_dir, _slug):
     raise AssertionError(f"GitHub asked about run {run_id} for a command that needs no lookup")
 
 
-def no_queue(_d):
-    return False
-
-
-def bash_decision(t, command, branch="feature", run_info=no_github, queue_of=no_queue,
+def bash_decision(t, command, branch="feature", run_info=no_github,
                   scope=gate.GUARD_ALL, **payload):
     path = t.write()
     try:
@@ -152,7 +141,7 @@ def bash_decision(t, command, branch="feature", run_info=no_github, queue_of=no_
             {"tool_name": "Bash", "tool_input": {"command": command}, "transcript_path": path,
              "tool_use_id": "toolu_now", "cwd": "/repo", **payload},
             FakeResolver(), sleep=no_sleep, branch_of=on_branch(branch),
-            scope=scope, history_scope=gate.GUARD_ALL, run_info=run_info, queue_of=queue_of)
+            scope=scope, history_scope=gate.GUARD_ALL, run_info=run_info)
     finally:
         os.unlink(path)
 
@@ -606,180 +595,23 @@ class ClassifyEdgesTest(unittest.TestCase):
         self.assertEqual(details["reruns"], [("42", "/repo", "o/r")])
 
 
-class LandQueueClassifyTest(unittest.TestCase):
-    """Slice 806: the land queue's integrator merges inside the script, so enqueueing
-    (`ship:land land`) is the merge the floor must see."""
-
-    def c(self, cmd, cwd="/repo"):
-        return gate.classify(cmd, cwd, branch_of=on_branch("feature"))
-
-    def test_every_way_of_running_a_land_is_a_merge(self):
-        for cmd in (
-            "pnpm ship:land land --pr 1361",
-            "pnpm run ship:land land --pr 1361",
-            "pnpm --silent ship:land land --pr 1361",
-            "npm run ship:land -- land --pr 1361",
-            "node scripts/ship-land.mjs land --pr 1361",
-            'node "scripts/ship-land.mjs" land --pr 1361',
-            "node --env-file .env scripts/ship-land.mjs land --pr 1361",
-            "./scripts/ship-land.mjs land --pr 1361",
-            "ship-land land --pr 1361",
-            "pnpm exec node scripts/ship-land.mjs land --pr 1361",
-            "env FORCE_COLOR=0 pnpm ship:land land --pr 1361",
-            "timeout 600 node scripts/ship-land.mjs land --pr 1361",
-            "pnpm ship:land land --pr 1361 > /tmp/land.log 2>&1",
-            "git fetch origin main && pnpm ship:land land --pr 1361",
-            "echo start; pnpm ship:land land --pr 1361",
-        ):
-            self.assertEqual(self.c(cmd), {"merge"}, cmd)
-
-    def test_an_unknown_or_missing_subcommand_is_a_merge(self):
-        self.assertEqual(self.c("pnpm ship:land"), {"merge"})
-        self.assertEqual(self.c("pnpm ship:land integrate"), {"merge"})
-
-    def test_status_and_help_are_not_a_release(self):
-        for cmd in ("pnpm ship:land status", "node scripts/ship-land.mjs status --json /tmp/q.json",
-                    "pnpm ship:land --help", "pnpm ship:land land --help", "ship-land help"):
-            self.assertEqual(self.c(cmd), set(), cmd)
-
-    def test_text_about_it_and_work_on_it_are_not_a_land(self):
-        for cmd in (
-            'echo "pnpm ship:land land --pr 1"',
-            "git commit -m 'feat: pnpm ship:land land lands a PR'",
-            "# pnpm ship:land land --pr 1\ngit status",
-            "cat > /tmp/b.md <<'EOF'\npnpm ship:land land --pr 1\nEOF",
-            "cat scripts/ship-land.mjs",
-            "grep -n ship:land package.json",
-            "pnpm exec prettier --check scripts/ship-land.mjs",
-            "pnpm exec eslint scripts/ship-land.mjs",
-            "node --check scripts/ship-land.mjs",
-            "pnpm exec vitest run scripts/__tests__/ship-land.test.mjs",
-            "pnpm ship:gate --label ship",
-            "node scripts/ship-gate.mjs --add-tests packages/web --reason 'x'",
-        ):
-            self.assertEqual(self.c(cmd), set(), cmd)
-
-    def test_scope_follows_the_repository_it_lands_in(self):
-        def c(cmd, cwd):
-            return gate.classify(cmd, cwd, branch_of=on_branch("feature"), scope=scope())
-
-        self.assertEqual(c("pnpm ship:land land --pr 1", "/work/endoxia"), {"merge"})
-        self.assertEqual(c("pnpm ship:land land --pr 1", "/work/eabos"), set())
-        self.assertEqual(c("cd /work/endoxia && pnpm ship:land land --pr 1", "/work/eabos"), {"merge"})
-        self.assertEqual(c("pnpm -C /work/endoxia ship:land land --pr 1", "/work/eabos"), {"merge"})
-        self.assertEqual(c("node /work/endoxia/scripts/ship-land.mjs land --pr 1", "/work/eabos"), {"merge"})
-        self.assertEqual(c("pnpm ship:land land --pr 1", "/gone"), {"merge"}, "an unknown target is guarded")
-
-    def test_a_piped_land_is_marked(self):
-        piped = set()
-        gate.classify("pnpm ship:land land --pr 1 2>&1 | tail -5", "/repo",
-                      branch_of=on_branch("feature"), piped=piped)
-        self.assertEqual(piped, {"merge"})
-
-    def test_details_name_the_land(self):
-        details = {}
-        gate.classify("pnpm ship:land land --pr 1", "/repo", branch_of=on_branch("feature"), details=details)
-        self.assertTrue(details.get("land"))
-        details = {}
-        gate.classify("gh pr merge 1 --squash", "/repo", branch_of=on_branch("feature"), details=details)
-        self.assertFalse(details.get("land"))
-
-
-LAND = "pnpm ship:land land --pr 1361"
-
-
-class LandQueueApprovalTest(unittest.TestCase):
-    def test_a_land_needs_an_approval(self):
-        reason = bash_decision(Transcript().prose("land it"), LAND)
-        self.assertIn("merge", reason)
-        self.assertIn("/approve", reason)
-
-    def test_ship_quickship_and_merge_each_cover_one_land(self):
-        for skill in ("claude-tdd-workflow:ship", "claude-tdd-workflow:quickship", "claude-tdd-workflow:merge"):
-            t = Transcript().typed(skill)
-            self.assertIsNone(bash_decision(t, LAND), skill)
-            t.bash(LAND)
-            self.assertIsNotNone(bash_decision(t, "pnpm ship:land land --pr 1362"), skill)
-
-    def test_an_approval_covers_one_bare_land(self):
-        t = Transcript().typed("approve", "merge")
-        self.assertIsNone(bash_decision(t, LAND))
-        t.bash(LAND)
-        self.assertIsNotNone(bash_decision(t, LAND))
-
-    def test_a_deploy_or_promote_approval_does_not(self):
-        self.assertIn("merge", bash_decision(Transcript().typed("approve", "deploy"), LAND))
-        self.assertIn("merge", bash_decision(Transcript().typed("claude-tdd-workflow:deploy"), LAND))
-        self.assertIn("merge", bash_decision(Transcript().typed("approve", "promote"), LAND))
-
-    def test_status_needs_nothing(self):
-        def read(*_a):
-            raise AssertionError("transcript read for a read-only land command")
-
-        payload = {"tool_input": {"command": "pnpm ship:land status"}, "transcript_path": "/x", "cwd": "/repo"}
-        self.assertIsNone(gate.decide_bash(payload, FakeResolver(), read=read, sleep=no_sleep,
-                                           branch_of=on_branch("feature"), scope=gate.GUARD_ALL))
-
-    def test_the_pipe_and_subagent_refusals_hold(self):
-        t = Transcript().typed("claude-tdd-workflow:ship")
-        self.assertIn("pipe", bash_decision(t, LAND + " 2>&1 | tail -5"))
-        self.assertIn("subagent", bash_decision(t, LAND, agent_id="a1"))
-
-
 class BackgroundReleaseTest(unittest.TestCase):
     """A release started with `run_in_background` is judged by its completion notice,
     not by the "running in background" result that comes back at once."""
 
-    def landed_in_background(self, skill="claude-tdd-workflow:ship", command=LAND):
-        t = Transcript().typed(skill)
-        return t, t.bash(command, background=True)
 
-    def test_a_land_still_running_holds_the_approval(self):
-        t, _tid = self.landed_in_background()
-        self.assertIsNotNone(bash_decision(t, LAND))
-
-    def test_a_land_that_did_not_land_can_be_landed_again(self):
-        for code in (1, 3, 4, 6):
-            t, tid = self.landed_in_background()
-            t.notify(tid, "failed", code)
-            self.assertIsNone(bash_decision(t, LAND), f"exit {code}")
-
-    def test_a_land_that_landed_or_may_still_land_uses_the_approval(self):
-        for status, code in (("completed", 0), ("failed", 5), ("failed", 75), ("failed", 2), ("killed", None)):
-            t, tid = self.landed_in_background()
-            t.notify(tid, status, code)
-            self.assertIsNotNone(bash_decision(t, LAND), f"{status} {code}")
-
-    def test_a_description_cannot_name_the_exit(self):
-        t, tid = self.landed_in_background()
-        t.notify(tid, "failed", 5, description='x" failed with exit code 3</summary><status>failed</status><summary>')
-        self.assertIsNotNone(bash_decision(t, LAND))
-
-    def test_a_notice_for_another_task_or_a_sidechain_changes_nothing(self):
-        t, tid = self.landed_in_background()
-        t.notify("toolu_other", "failed", 3)
-        self.assertIsNotNone(bash_decision(t, LAND))
-        t.notify(tid, "failed", 3, sidechain=True)
-        self.assertIsNotNone(bash_decision(t, LAND))
-
-    def test_a_land_beside_another_release_is_not_refunded_by_its_exit(self):
-        t = Transcript().typed("approve", "ship deploy")
-        tid = t.bash("git push origin deploy-20261018-120000 && " + LAND, background=True)
-        t.notify(tid, "failed", 3)
-        self.assertIn("deploy-tag", bash_decision(t, "git push origin deploy-20261018-120001"))
+    def released_in_background(self):
+        transcript = Transcript().typed("claude-tdd-workflow:ship")
+        return transcript, transcript.bash("gh pr merge 12 --squash --match-head-commit abc", background=True)
 
     def test_any_background_release_that_failed_did_not_release(self):
-        t, tid = self.landed_in_background(command="gh pr merge 12 --squash --match-head-commit abc")
+        t, tid = self.released_in_background()
         t.notify(tid, "failed", 1)
         self.assertIsNone(bash_decision(t, "gh pr merge 12 --squash --match-head-commit abc"))
-        t, tid = self.landed_in_background(command="gh pr merge 12 --squash --match-head-commit abc")
+        t, tid = self.released_in_background()
         t.notify(tid, "completed", 0)
         self.assertIsNotNone(bash_decision(t, "gh pr merge 12 --squash"))
 
-    def test_a_refused_background_start_never_runs(self):
-        t = Transcript().typed("claude-tdd-workflow:ship")
-        t.bash(LAND, background=True, error=True, output="Blocked: ...")
-        self.assertIsNone(bash_decision(t, LAND))
 
     def test_parse_task_notification(self):
         t = Transcript()
@@ -790,217 +622,7 @@ class BackgroundReleaseTest(unittest.TestCase):
         self.assertIsNone(gate.parse_task_notification("<task-notification><status>failed</status>"))
 
 
-class ForegroundLandTest(unittest.TestCase):
-    """A land run in the foreground that exits non-zero comes back as an error result
-    whose text starts with `Exit code <n>` (Claude Code writes it before the output).
-    It is judged by that exit, like a background land: 2 can follow a merge whose
-    answer never came, and 5 is merged."""
-
-    def landed(self, code, command=LAND, approval=("claude-tdd-workflow:ship", "")):
-        t = Transcript().typed(*approval)
-        t.bash(command, error=True, output=f"Exit code {code}\nland: #1361 ...")
-        return t
-
-    def test_a_land_that_did_not_land_can_be_landed_again(self):
-        for code in (1, 3, 4, 6):
-            self.assertIsNone(bash_decision(self.landed(code), LAND), f"exit {code}")
-
-    def test_a_land_that_landed_or_may_still_land_uses_the_approval(self):
-        for code in (2, 5, 75, 143):
-            self.assertIsNotNone(bash_decision(self.landed(code), LAND), f"exit {code}")
-
-    def test_only_the_leading_exit_counts(self):
-        t = Transcript().typed("claude-tdd-workflow:ship")
-        t.bash(LAND, error=True, output="Exit code 5\nExit code 3\nlanded")
-        self.assertIsNotNone(bash_decision(t, LAND))
-        t = Transcript().typed("claude-tdd-workflow:ship")
-        t.bash(LAND, error=True, output="refused: superseded\nExit code 5")
-        self.assertIsNone(bash_decision(t, LAND), "no leading exit: it never ran")
-
-    def test_a_land_refused_before_running_uses_nothing(self):
-        t = Transcript().typed("claude-tdd-workflow:ship")
-        t.bash(LAND, error=True, output="PreToolUse:Bash hook error: Blocked: ...")
-        self.assertIsNone(bash_decision(t, LAND))
-
-    def test_any_other_failed_release_did_not_release(self):
-        merge = "gh pr merge 12 --squash --match-head-commit abc"
-        t = Transcript().typed("claude-tdd-workflow:merge")
-        t.bash(merge, error=True, output="Exit code 1\nGraphQL: Pull request is not mergeable")
-        self.assertIsNone(bash_decision(t, merge))
-
-    def test_a_land_beside_another_release_is_not_refunded_by_its_exit(self):
-        t = self.landed(3, command="git push origin deploy-20261018-120000 && " + LAND,
-                        approval=("approve", "ship deploy"))
-        self.assertIn("deploy-tag", bash_decision(t, "git push origin deploy-20261018-120001"))
-
-
-class PnpmCommandNotFoundTest(unittest.TestCase):
-    """`pnpm ship:land` where the checkout has no such script exits 254 (pnpm's
-    `Command "ship:land" not found`): the land never started, so nothing was used."""
-
-    def test_through_pnpm_254_is_not_charged(self):
-        for command in (LAND, "pnpm exec node scripts/ship-land.mjs land --pr 1361",
-                        "env FORCE_COLOR=0 pnpm ship:land land --pr 1361"):
-            t = Transcript().typed("claude-tdd-workflow:ship")
-            tid = t.bash(command, background=True)
-            t.notify(tid, "failed", 254)
-            self.assertIsNone(bash_decision(t, LAND), f"background: {command}")
-            t = Transcript().typed("claude-tdd-workflow:ship")
-            t.bash(command, error=True, output="Exit code 254\n ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL")
-            self.assertIsNone(bash_decision(t, LAND), f"foreground: {command}")
-
-    def test_run_directly_254_is_charged(self):
-        for command in ("node scripts/ship-land.mjs land --pr 1361", "./scripts/ship-land.mjs land --pr 1361"):
-            t = Transcript().typed("claude-tdd-workflow:ship")
-            tid = t.bash(command, background=True)
-            t.notify(tid, "failed", 254)
-            self.assertIsNotNone(bash_decision(t, LAND), command)
-
-    def test_details_carry_the_exits(self):
-        details = {}
-        gate.classify(LAND, "/repo", branch_of=on_branch("feature"), details=details)
-        self.assertEqual(details["land_not_landed"], frozenset({1, 3, 4, 6, 254}))
-        details = {}
-        gate.classify("node scripts/ship-land.mjs land --pr 1", "/repo", branch_of=on_branch("feature"),
-                      details=details)
-        self.assertEqual(details["land_not_landed"], frozenset({1, 3, 4, 6}))
-
-    def test_a_land_beside_a_direct_merge_is_not_refunded_by_its_exit(self):
-        t = Transcript().typed("approve", "ship hotfix")
-        tid = t.bash("gh pr merge 7 --merge && " + LAND, background=True)
-        t.notify(tid, "failed", 3)
-        # The one merge activation that covered it was used: what is left is one approval.
-        t.bash(LAND)
-        self.assertIsNotNone(bash_decision(t, "gh pr merge 8 --merge"))
-
-
-def queue_on_main(_d):
-    return True
-
-
-def queue_unreadable(_d):
-    return None
-
-
-def ask_nobody(d):
-    raise AssertionError(f"the queue of {d} was read for a command no queue-only skill alone covers")
-
-
-class LandQueueLockTest(unittest.TestCase):
-    """B2: where main lands through the queue (origin/main's package.json has
-    ship:land), /ship, /merge and /quickship cover the land and nothing else onto main:
-    a branch cut before the queue landed would otherwise merge around it."""
-
-    BARE = ("gh pr merge 12 --squash --match-head-commit abc",
-            "gh api -X PUT repos/:owner/:repo/pulls/12/merge",
-            "cd /repo && gh pr merge 12 --squash")
-
-    def test_the_ship_skills_cover_no_bare_merge_where_main_has_a_queue(self):
-        for skill in ("claude-tdd-workflow:ship", "claude-tdd-workflow:merge", "claude-tdd-workflow:quickship"):
-            for command in self.BARE:
-                reason = bash_decision(Transcript().typed(skill), command, queue_of=queue_on_main)
-                self.assertIn("land queue", reason, f"{skill}: {command}")
-                self.assertIn("git merge origin/main", reason)
-                self.assertIn("Nothing was used", reason)
-            self.assertIsNone(bash_decision(Transcript().typed(skill), LAND, queue_of=queue_on_main), skill)
-
-    def test_nor_a_push_to_main(self):
-        t = Transcript().typed("claude-tdd-workflow:quickship")
-        for command in ("git push origin main", "git push origin HEAD:refs/heads/main", "git push --all origin",
-                        "gh api -X DELETE repos/:owner/:repo/git/refs/heads/main"):
-            self.assertIn("land queue", bash_decision(t, command, queue_of=queue_on_main), command)
-        self.assertIn("land queue", bash_decision(t, "git push", branch="main", queue_of=queue_on_main))
-
-    def test_an_approval_ahead_is_held_the_same_way(self):
-        for name in ("ship", "merge", "quickship"):
-            t = Transcript().typed("approve", name)
-            self.assertIn("land queue", bash_decision(t, "gh pr merge 12 --squash", queue_of=queue_on_main), name)
-            self.assertIsNone(bash_decision(t, LAND, queue_of=queue_on_main), name)
-
-    def test_without_a_queue_on_main_the_generic_flow_still_merges(self):
-        t = Transcript().typed("claude-tdd-workflow:ship")
-        self.assertIsNone(bash_decision(t, "gh pr merge 12 --squash"))
-        t = Transcript().typed("claude-tdd-workflow:quickship")
-        self.assertIsNone(bash_decision(t, "git push origin main"))
-
-    def test_an_unreadable_main_is_held_for_the_ship_skills(self):
-        reason = bash_decision(Transcript().typed("claude-tdd-workflow:ship"), "gh pr merge 12 --squash",
-                               queue_of=queue_unreadable)
-        self.assertIn("cannot be read", reason)
-
-    def test_a_merge_naming_another_repository_than_the_checkout_is_held(self):
-        def must_not_read(d):
-            raise AssertionError(f"read {d}, which is not a checkout of the named repository")
-
-        reason = bash_decision(Transcript().typed("claude-tdd-workflow:ship"),
-                               "gh pr merge 3 --squash -R EndoxiaBV/Endoxia", cwd="/work/eabos",
-                               scope=scope(), queue_of=must_not_read)
-        self.assertIn("cannot be read", reason)
-        self.assertIn("EndoxiaBV/Endoxia", reason)
-        reason = bash_decision(Transcript().typed("claude-tdd-workflow:ship"),
-                               "gh api -X PUT repos/EndoxiaBV/Endoxia/pulls/3/merge", cwd="/work/eabos",
-                               scope=scope(), queue_of=must_not_read)
-        self.assertIn("cannot be read", reason)
-        # Named from its own checkout, the queue is read there.
-        self.assertIsNone(bash_decision(Transcript().typed("claude-tdd-workflow:ship"),
-                                        "gh pr merge 3 --squash -R EndoxiaBV/Endoxia", cwd="/work/endoxia",
-                                        scope=scope(), queue_of=no_queue))
-
-    def test_a_skill_that_may_go_around_the_queue_keeps_its_merge(self):
-        # Endoxia's /hotfix merges back with a merge commit, around the squashing queue.
-        t = Transcript().typed("claude-tdd-workflow:hotfix")
-        self.assertIsNone(bash_decision(t, "gh pr merge 1400 --merge", queue_of=ask_nobody))
-        t = Transcript().typed("approve", "hotfix")
-        self.assertIsNone(bash_decision(t, "gh pr merge 1400 --merge", queue_of=ask_nobody))
-
-    def test_the_queue_is_read_only_when_a_queue_only_skill_alone_covers_it(self):
-        self.assertIn("plain words", bash_decision(Transcript().prose("merge"), "gh pr merge 1",
-                                                   queue_of=ask_nobody))
-        t = Transcript().typed("claude-tdd-workflow:ship")
-        self.assertIsNone(bash_decision(t, LAND, queue_of=ask_nobody))
-
-    def test_a_refused_bare_merge_uses_nothing(self):
-        t = Transcript().typed("claude-tdd-workflow:ship")
-        t.bash("gh pr merge 12 --squash", error=True, output="PreToolUse:Bash hook error: Refused ...")
-        self.assertIsNone(bash_decision(t, LAND, queue_of=queue_on_main))
-
-    def test_a_land_uses_the_queue_only_skill_and_leaves_the_merge_back(self):
-        t = Transcript().typed("claude-tdd-workflow:hotfix").typed("claude-tdd-workflow:ship")
-        t.bash(LAND)
-        self.assertIsNone(bash_decision(t, "gh pr merge 1400 --merge", queue_of=queue_on_main))
-        t = Transcript().typed("claude-tdd-workflow:hotfix").typed("claude-tdd-workflow:ship")
-        t.bash("gh pr merge 1400 --merge")
-        self.assertIsNone(bash_decision(t, LAND, queue_of=queue_on_main))
-        t.bash(LAND)
-        self.assertIsNotNone(bash_decision(t, LAND, queue_of=queue_on_main))
-
-
 class FrontmatterTest(unittest.TestCase):
-    def test_reads_land_queue_only(self):
-        fd, path = tempfile.mkstemp(suffix=".md")
-        with os.fdopen(fd, "w") as fh:
-            fh.write("---\nname: ship\nrelease-actions: merge\nland-queue: only\n---\n# body\n")
-        try:
-            self.assertTrue(gate.read_land_queue_only(path))
-        finally:
-            os.unlink(path)
-        fd, path = tempfile.mkstemp(suffix=".md")
-        with os.fdopen(fd, "w") as fh:
-            fh.write("---\nname: hotfix\nrelease-actions: dispatch, merge\n---\nland-queue: only\n")
-        try:
-            self.assertFalse(gate.read_land_queue_only(path), "only the frontmatter counts")
-        finally:
-            os.unlink(path)
-
-    def test_shipped_skills_say_which_land_only_through_the_queue(self):
-        root = os.path.dirname(os.path.dirname(HERE))
-        for skill, expected in (("ship", True), ("merge", True), ("quickship", True), ("deploy", False)):
-            path = os.path.join(root, "skills", skill, "SKILL.md")
-            self.assertEqual(gate.read_land_queue_only(path), expected, skill)
-        resolver = gate.SkillResolver("/nonexistent")
-        self.assertTrue(resolver.land_queue_only("claude-tdd-workflow:ship"))
-        self.assertFalse(resolver.land_queue_only("claude-tdd-workflow:deploy"))
-
     def test_reads_release_actions(self):
         fd, path = tempfile.mkstemp(suffix=".md")
         with os.fdopen(fd, "w") as fh:
@@ -1012,8 +634,7 @@ class FrontmatterTest(unittest.TestCase):
 
     def test_shipped_skills_declare_what_they_do(self):
         root = os.path.dirname(os.path.dirname(HERE))
-        # quickship merges through the land queue where a repo has one, so it declares both.
-        for skill, expected in (("ship", ("merge",)), ("quickship", ("merge", "push-main")),
+        for skill, expected in (("ship", ("merge",)), ("quickship", ("push-main",)),
                                 ("merge", ("merge",)), ("deploy", ("deploy-tag",))):
             path = os.path.join(root, "skills", skill, "SKILL.md")
             self.assertEqual(gate.read_release_actions(path), expected, skill)

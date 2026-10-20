@@ -1,10 +1,9 @@
 ---
 name: ship
-description: Commit, gate the change, push, open the PR and land it on main. Runs when the user types /ship, or when Claude invokes it after the user typed /approve ship (one run).
+description: Validate the change, commit, merge main, push, open a PR and squash-merge directly. Runs when the user types /ship, or after /approve ship (one run).
 release-actions: merge
-land-queue: only
 argument-hint: "[PR title]"
-allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/land_queue.py *)
+allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py *)
 ---
 
 # Ship
@@ -14,175 +13,106 @@ allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node
 - Branch: !`git branch --show-current`
 - Status: !`git status --short`
 - Diff stats: !`git diff --stat HEAD`
-- Recent commits on this branch: !`git log --oneline -5`
-- Land queue: !`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/land_queue.py --fetch`
 
-Every command below is ONE plain command with its values written out: no
-variables, no `$(...)`, git as its own command, no pipe on a release command (the
-release gate refuses a piped release: a pipe reports its last command's status).
-Anything that runs longer than a few seconds runs with `run_in_background: true`;
-act on its completion notification, never `sleep` or poll.
+Each command is one plain call, with literal values. Never pipe a release command.
+Stay on this branch; use a feature branch for /ship. Main uses /quickship.
 
-## Both flows start here
+## Steps
 
-**How `main` lands decides the flow, not this branch.** The `Land queue` line fetched
-`origin main` and read `origin/main`'s `package.json`: a branch cut before the queue
-landed has no `ship:land` of its own, and reading the branch's file would send it
-around the queue with a bare merge.
+1. **Something to ship.** If there is neither a change nor an unmerged commit, STOP.
 
-- `queue` → steps 1 and 2, then the land-queue steps below.
-- `none` → steps 1 and 2, then the generic flow. That includes the branch that brings
-  the queue: until it is on `main`, other sessions still merge the old way, and a
-  queue that other merges go around cannot promise main is the tree it tested.
-- `merge-main-first` → STOP: "main lands through the queue now; `git merge
-  origin/main` first, then /ship." (VERIFY then runs again on the merged tree; step
-  2 asks for it.)
-- `unknown: …`, or anything else (no verdict, an error) → STOP and report the line:
-  without knowing how main lands, nothing merges.
+2. **VERIFY before changing HEAD.** Read `.claude/.verify-state.json`: its `headSha`
+   must equal `git rev-parse HEAD`. Missing or stale state means complete VERIFY
+   through /feature or /refactor first. Check it now, before committing and before
+   merging main; those steps do not re-arm VERIFY. A new feature change does.
 
-1. **Something to ship.** Status empty and `git log --oneline origin/main..HEAD`
-   empty → STOP: nothing to ship.
-2. **VERIFY ran on this diff.** `jq -r .headSha .claude/.verify-state.json` must
-   print what `git rev-parse HEAD` prints. A missing file or another SHA → STOP:
-   "VERIFY has not run on this diff. Complete it (re-enter /feature or /refactor)
-   before /ship."
+3. **Commit.** Stage relevant files and create a conventional commit. Read the diff
+   first and keep unrelated changes out. The working tree must then be clean.
 
-**`none`:** read `${CLAUDE_SKILL_DIR}/generic.md` and follow it, then "After it
-lands" below. **`queue`:** the steps below. The queue is the only way onto `main`
-here: nothing merges a PR or pushes `main` around it, and the release gate refuses
-a bare PR merge, a merge through the API or a push to main under this skill.
+4. **Merge main in.** `git fetch origin main`, then
+   `git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main`.
+   Resolve conflicts in this branch, preserving both changes, and finish the merge
+   commit with that same conventional subject.
+   Keep commit hooks enabled. Do not rewrite history or force-push.
+   An ordinary integration conflict does not restart the specialist workflow;
+   substantive new feature work does. Local validation below checks the merged tree.
 
-## Land queue: the scripts own the mechanics, you own the judgment
+5. **Local validation.** Read the checkout's own `package.json` after the merge.
+   When it declares `ship:check`, run `pnpm ship:check` once. It selects affected
+   lint/typecheck, scoped assertions and directly touched tests. The model may add
+   `--add-tests`, `--add-package` or `--add-checks`, each with `--reason`, for a
+   boundary the automatic selection cannot see; nothing narrows the floor.
+   Exit `0` passes, `1` fails, `2` refuses (fix the named environment issue, then
+   retry). Any other nonzero exit or interrupted command is not a pass: report its
+   output and resolve the cause. No automatic full-suite escalation.
+   Without that script, follow `${CLAUDE_SKILL_DIR}/generic.md` (the repo's own
+   lint, typecheck, formatting, tests, build and assertions).
+   Independent checks may run together. A call that can exceed about 8 minutes
+   runs with `run_in_background: true`; wait for its completion notification,
+   never sleep-poll. Any validation failure blocks this ship.
 
-`pnpm ship:gate` picks what to run from the change and reuses the record of a tree
-already proven from the same merge base (VERIFY's run, usually). When main moved
-since, it runs again only the checks that read main's tip, and says which. A gate with heavy
-work waits for a slot of the machine: the measured default is one slot, so such
-gates run one at a time in ticket order, and one with nothing heavy to run takes no
-slot. `pnpm ship:land` hands the PR to one integrator that tests the merged result
-once and squash-merges in queue order. Neither needs main watched or merged in.
-Yours: the commit message, what the floor cannot see, the PR text, and reading the
-outcome.
+6. **Push and open the PR.** `git push -u origin <branch>`, then
+   `gh pr create --title "<title>" --body-file <body-file>`. Write the summary and
+   validation evidence to that file first. Use $ARGUMENTS as title when supplied.
+   Read main's newest `endoxia/main-health` status with
+   `gh api repos/:owner/:repo/commits/main/statuses --jq '[.[] | select(.context == "endoxia/main-health")][0] // null'`.
+   A red main never blocks a ship: print the failing status and say whether this
+   change fixes it. Missing or pending health is reported too; an API error means
+   unknown health and does not block this ship. Main's short CI
+   checks the merged range after the merge; the whole suite gates production.
 
-3. **Commit.** Stage what belongs to the change (`git add <paths>`; never secrets or
-   scratch files) and commit in conventional form, `type(scope): what changes for
-   the reader` (`feat`, `fix`, `refactor`, `docs`, `test`, `chore`, ...;
-   `commit-msg` refuses anything else). `$ARGUMENTS`, when given, is the subject.
-   Then `git status --short` must print nothing: the gate records the working tree,
-   and `pre-push` looks up the tree of the commit it pushes, so a file left
-   uncommitted or untracked makes the two differ.
+7. **Squash-merge once GitHub has settled the PR for the commit you pushed.**
+   GitHub recomputes mergeability in the background after every push. A merge in
+   that window was answered "merge conflicts" for a branch without any, the session
+   merged main again and re-ran the gate, and push-to-merge reached a p90 of
+   26.6 min. Every command below is one plain command with the values written out.
 
-4. **Gate.** Read the diff (`git diff --stat origin/main...HEAD`, then the hunks
-   that matter). The floor already selects lint and typecheck of what is affected,
-   Prettier on the changed files, the checks whose inputs changed, every test that
-   imports a changed file, every changed test and the registered always-run tests.
-   Add what no import reaches:
-   - a contract crossed over HTTP, SSE, a queue or the database rather than an
-     import (a Core route the BFF calls, an event shape) → the other side's tests:
-     `--add-package <@scope/pkg>` or `--add-tests <path|glob>`;
-   - text loaded at runtime (a prompt, a skill, a SQL migration, a JSON/YAML
-     config) → the tests that load it, such as its budget or eval test;
-   - a check whose subject you changed without touching its declared inputs →
-     `--add-checks <check:a,check:b>`;
-   - a change whose reach you cannot bound (build tooling, the runtime, a helper
-     everything calls) → `--full`.
+   a. **Read the PR:** `gh pr view --json number,headRefOid,headRefName`. From here
+      on `<PR>`, `<SHA>` (the head you pushed) and `<BRANCH>` are written literally.
 
-   Any addition needs `--reason "<one line: why the floor misses each>"`, given
-   once: the gate keeps one reason per run, and a second `--reason` replaces the
-   first. You only add; nothing narrows the floor. With `run_in_background: true`
-   and the Bash `timeout` at `7200000` (a full gate may hold for 75 minutes, past
-   the 30-minute default): `pnpm ship:gate --label ship` plus your additions. It
-   prints what it ran and why. Write the PR title and body while it runs.
-   - `0` → passed (or reused a record of this tree): step 5.
-   - `1` → it names what failed and where the full output is. Fix it here,
-     commit the fix, run step 4 again.
-   - `2` → refused: the environment, not the code (wrong Node major, a missing
-     build). Do what its message says and run it again; never work around it.
-     A dependency install that failed is a `2` too: the gate first makes the
-     worktree's dependencies ready for its lockfile, so a red after a merge of
-     main is never a stale install. Retry the install it names (`bash
-     scripts/worktree-deps.sh`, its log in the git dir); never move a version pin.
-   - `75` → no slot came free before its deadline: run it again once; a second
-     `75` → report it and STOP.
-   - `143`, or a notice that it was stopped at its time limit → the Bash ceiling
-     stopped it, and it judged nothing. Its wait for a slot counts against that
-     ceiling, so a gate queued behind others can be stopped although its own run
-     fits: run it again once; a second stop → report it and STOP.
+   b. **Wait for the settled state, in the background.** With
+      `run_in_background: true`:
+      `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py <PR> --head <SHA>`
+      and act on its completion notification (do not poll it, do not `sleep`). It
+      counts a state only once `headRefOid` is `<SHA>`, and stops at 180 s (six of
+      seven measured settles took at most 26 s). Its last line and exit:
+      - `0` `CLEAN` / `HAS_HOOKS` → merge now (c), in the same minute.
+      - `6` `UNSTABLE` at the bound → mergeable, but a check that is not required is
+        failing or pending: merge (c), and name those checks from
+        `gh pr checks <PR>` in your report.
+      - `3` `DIRTY` / `BEHIND` → `git fetch origin main`, then
+        `git rev-list --count HEAD..origin/main`. `0` means the state was stale: run
+        the wait again. Otherwise main moved: use the merge command from step 4
+        with its conventional subject, resolve conflicts, run local validation
+        again, then push and wait again. Do not re-arm VERIFY solely for that merge.
+      - `4` `BLOCKED` → a required check or review is missing: `gh pr checks <PR>`,
+        report it, STOP. `--admin` only when the user explicitly asks to force:
+        `gh pr merge <PR> --squash --admin --match-head-commit <SHA>`. Never silently.
+      - `5` `merge_state_wait_deadline` → report the state it names and STOP; the
+        user decides.
+      - `7` → the PR is no longer open: go to (d).
 
-5. **Push:** `git push -u origin <branch>`, never `--no-verify`. `pre-push` reuses
-   the gate's record for this commit's tree; if it runs the gate itself, the tree
-   changed after step 4, or main moved and the checks that read its tip run again:
-   read why before going on. If it refuses (no record covers the commit and the checkout is not
-   that commit), do what it says.
+   c. **Merge:** `gh pr merge <PR> --squash --match-head-commit <SHA>`. No pipe (the
+      release gate refuses a piped release: a pipe reports its last command's
+      status). No `--delete-branch`: in a worktree gh merges on GitHub, then checks
+      out `main` to delete the local branch, fails with `fatal: 'main' is already
+      used by worktree at …`, exits 1 after a SUCCESSFUL merge (2026-10-07 and
+      10-12), and never reaches the remote branch, which it deletes after the local
+      one. `--match-head-commit` makes GitHub refuse if the head moved since (b).
 
-6. **The PR.** When `gh pr view --json number,state` answers `OPEN` (a second pass
-   after a conflict), that is `<PR>`. Otherwise
-   `gh pr create --title "<title>" --body "<body>"`: the title is the commit
-   subject; the body says what changed and why, the test plan, and each gate
-   addition with its reason. `<PR>` is the number it prints.
+   d. **The verdict comes from the PR, never from the merge command's exit code:**
+      `gh pr view <PR> --json state,mergeCommit -q '.state + " " + (.mergeCommit.oid // "-")'`.
+      `MERGED <sha>` is the verdict; anything else is a failed merge, and the merge
+      command's output is the reason.
 
-7. **Land**, with `run_in_background: true` and the Bash `timeout` at its ceiling,
-   `7200000`:
-   `pnpm ship:land land --pr <PR> --max-wait-ms 7000000`
-   then end your turn and act on the notification. The queue derives its own
-   deadline from what is ahead of it; `--max-wait-ms` keeps it inside the
-   background ceiling (7,200,000 ms less 200 s for the exit to be read). A run the
-   harness stops anyway is safe, and like `75` it used the approval: `/merge <PR>`
-   re-attaches to the same entry, and an integrator that died is taken over.
+   e. **Delete the remote branch, after `MERGED` only:**
+      `gh api -X DELETE repos/:owner/:repo/git/refs/heads/<BRANCH>`, the PR's own
+      head branch, never `main`/`master` (the release gate refuses deleting main
+      through the API). A 422 "Reference does not exist" means the repository's
+      "Automatically delete head branches" setting already removed it: done.
 
-8. **The outcome is its exit code.** Its last lines say what happened.
-   - `0` landed: it prints main's new SHA. Report "Landed #<PR> on main as
-     <sha8>.", then "After it lands".
-   - `3` textual conflict: it names the files and the change it collided with.
-     `git fetch origin main`, then `git merge --no-edit origin/main`, resolve
-     keeping both sides' intent (a slice index both sides appended to: keep both
-     lines), commit, and go back to step 4. When `origin/main` does not hold the
-     colliding change yet, it is still ahead of you in the queue
-     (`pnpm ship:land status`): land again once it has landed.
-   - `1` the gate failed on the merged result and named this PR: the break is
-     between this change and what landed before it. Merge `origin/main` as for
-     `3`, then step 4 reproduces it on the merged tree; fix, commit, step 4.
-   - `4` refused. Read the reason it printed: a newer push of this PR superseded
-     the entry, or a batch was already landing the old head → run step 7 again
-     (after that batch, for the second); the PR was closed, retargeted, or GitHub
-     refused the merge → report the reason and STOP.
-   - `6` main is red on its own: what failed on the merged result also fails on
-     `origin/main` alone, so no PR was blamed and none of the batch merged. Main's
-     red clears only when a batch lands whose gate passes what main fails, so
-     waiting does not clear it. Read the evidence it printed (the failing steps and
-     tests on main, with their logs). When it names a timing-sensitive or flaky
-     failure (a timeout, a test that passes when run again), run step 7 again: exit
-     6 did not use this approval, and that batch's gate runs main's failing steps
-     again. Otherwise main is broken: report the evidence and STOP. The fix goes
-     through the queue as its own PR (landing it is what clears main), and this PR
-     lands after it. Never run `pnpm ship:land clear-main-red` yourself: removing
-     main's red record by hand is the owner's call. When the evidence says the
-     record is wrong, say so in the report and name that command.
-   - `2` the land could not decide (it says which: an environment problem, a
-     merge GitHub accepted but did not report merged in time, two red runs of one
-     tree that share no step, a main red the queue's own passing runs of main
-     contradict, a bisect whose reds disagreed, or an internal error) → run step 7
-     once more; it re-attaches to the same entry. A
-     second `2` → report it and STOP. It promises nothing: never report the PR
-     as not merged (`pnpm ship:land status` shows where it is).
-   - `5` merged, but main is not, or may not be, the tree the queue tested: main
-     changed outside the queue, or the batch's merges stopped part-way and main
-     sits at a prefix it gated only afterwards (it prints that gate's verdict).
-     STOP and tell the owner, quoting what it printed; what happens to main is the
-     owner's call.
-   - `75` the queue ahead outlasted the deadline: report that #<PR> is still
-     queued (`pnpm ship:land status`) and that `/merge <PR>` waits for it again.
-   - anything else: report its output and STOP.
-
-   A land that exited `1`, `3`, `4` or `6` landed nothing, and pnpm's `254`
-   (command not found) never started one, so neither used this /ship's approval:
-   steps 4-8 again are this same run. Every other exit used it.
 
 ## After it lands
-
-0. **Land queue only: delete the remote branch.** `git push origin --delete <branch>`.
-   A "remote ref does not exist" means the repository already deleted it; that is
-   fine. (The generic flow deletes it in its merge step.)
 
 1. **Stop what this worktree started, in this order: dev server, Chrome, containers.**
    Stop BEFORE deleting build output: `rm -rf packages/web/.next` under a live

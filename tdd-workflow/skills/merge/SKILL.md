@@ -1,97 +1,45 @@
 ---
 name: merge
-description: Squash-merge a PR into main, through the land queue where the repo has one. Runs when the user types /merge, or after /approve merge (one run).
+description: Squash-merge a PR directly into main. Runs when the user types /merge, or after /approve merge (one run).
 release-actions: merge
-land-queue: only
 argument-hint: "[PR number or branch name]"
 ---
 
 # Merge
 
-Squash-merge an existing PR into main. Do not print manual cleanup
-instructions here: `/ship` owns post-merge cleanup (it stops this worktree's
-processes and deletes its build output), and Claude Code's exit prompt removes
-the worktree.
+Every command is one plain call with literal values. Never pipe the merge.
+Use this merge approval throughout; do not invoke another release skill.
+Never rewrite history or force-push.
+Read main's newest `endoxia/main-health` status with
+`gh api repos/:owner/:repo/commits/main/statuses --jq '[.[] | select(.context == "endoxia/main-health")][0] // null'`.
+Print a red and whether this PR fixes it. A red main never blocks a ship or this merge; main CI checks the merged
+range and promote gates production. Report missing or pending health too.
 
-## Context (pre-computed)
-
-- Land queue: !`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/land_queue.py --fetch`
-
-Every command below is one plain command with the values written out literally:
-no variables, no `$(...)`, no pipe on the merge (the release gate refuses a piped
-release, and a worktree session refuses commands it cannot read).
-
-How `main` lands decides the flow, not this checkout: the `Land queue` line fetched
-`origin main` and read `origin/main`'s `package.json`.
-
-- `queue` → "Land queue `queue`" below.
-- `merge-main-first` → STOP: "main lands through the queue now; this checkout
-  predates it: `git merge origin/main` first, then /merge."
-- `unknown: …`, or anything else (no verdict, an error) → STOP and report the line:
-  without knowing how main lands, nothing merges.
-- `none` → "Land queue `none`" below.
-
-## Land queue `queue`: the queue lands it
-
-Where `main` has `ship:land` (Endoxia since slice 806) the land queue is the only
-way onto `main`: nothing merges a PR around it, and the release gate refuses a
-bare PR merge or a merge through the API under this skill there. The queue's
-integrator gates the merged result once and squash-merges in order.
-
-1. **Identify the PR.** `$ARGUMENTS` is the PR number or branch, else the current
-   branch: `gh pr view <PR-or-branch> --json number,state,headRefName`. `<PR>` is
-   its number and `<branch>` its head branch; state must be `OPEN`, otherwise STOP
-   and report it.
-2. **Land it**, with `run_in_background: true` and the Bash `timeout` at `7200000`:
-   `pnpm ship:land land --pr <PR> --max-wait-ms 7000000`
-   then end your turn and act on the notification (`--max-wait-ms` keeps the
-   queue's own deadline inside the background ceiling, less 200 s to read the
-   exit). For a PR already queued (a `/ship` that hit its deadline) this
-   re-attaches to that entry and waits for it again.
-3. **Report by exit code.**
-   - `0` landed: "Merge complete: PR #<PR> landed on main as <sha8>."
-   - `3` textual conflict: name the files and the change it collided with; the
-     branch needs `origin/main` merged in and `/ship` from its own worktree.
-   - `1` the gate failed on the merged result and named this PR: say what failed;
-     the fix belongs in the branch's worktree, then `/ship` there.
-   - `4` refused: superseded by a newer push, or a batch was landing the old head
-     → run step 2 again (after that batch); PR closed, retargeted, or GitHub
-     refused → report the reason.
-   - `6` main is red on its own; nothing of the batch merged. Main's red clears only
-     when a batch lands whose gate passes what main fails, so waiting does not clear
-     it. Read the evidence (what fails on `origin/main` alone, with its logs). When
-     it names a timing-sensitive or flaky failure (a timeout, a test that passes
-     when run again), run step 2 again: exit 6 did not use this approval. Otherwise
-     report the evidence and STOP: the fix goes through the queue as its own PR, and
-     landing it is what clears main; this PR lands after it. Never run
-     `pnpm ship:land clear-main-red` yourself: that is the owner's call.
-   - `5` merged, but main is not, or may not be, the tested tree (changed outside
-     the queue, or the merges stopped part-way): STOP and tell the owner, quoting it.
-   - `2` the land could not decide (environment, a merge not yet reported, two
-     reds of one tree that share no step, a main red the queue's own passing runs
-     contradict, a bisect whose reds disagreed, an internal error): run step 2 once
-     more; a second `2`, report it.
-     It promises nothing, so never report the PR as not merged.
-   - `75` the queue ahead outlasted the deadline: #<PR> is still queued
-     (`pnpm ship:land status`); `/merge <PR>` waits again.
-
-   After `0`, delete the remote branch: `git push origin --delete <branch>` (a
-   "remote ref does not exist" means the repository already did).
-
-   A land that exited `1`, `3`, `4` or `6` landed nothing, and pnpm's `254`
-   (command not found) never started one: neither used this approval; every other
-   exit used it.
-
-**Landing does NOT deploy.** Run `/deploy` when you want it released.
-
-Stop reading here. Everything below is for a repo without a land queue.
-
-## Land queue `none`: process
+## Process
 
 1. **Identify the PR.** `$ARGUMENTS` is the PR number or branch, else the current
    branch: `gh pr view <PR-or-branch> --json number,state,headRefOid,headRefName`.
    `<PR>`, `<SHA>` (its head) and `<BRANCH>` are written literally from here on.
    State must be `OPEN`; otherwise STOP and report it.
+
+   **Prepare the existing PR when needed, under this merge approval.** Inspect
+   its validation evidence against `<SHA>`. If integration or validation is needed,
+   use the PR branch's own checkout, with a clean tree and HEAD equal to `<SHA>`.
+   If this session is elsewhere, STOP and name the required checkout; never switch
+   a shared branch. Check `.claude/.verify-state.json` against HEAD before changing
+   it; missing or stale evidence requires VERIFY first. Then `git fetch origin main`
+   and `git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main`.
+   Resolve conflicts and finish the merge with that same conventional subject;
+   keep commit hooks enabled.
+   Integration alone does not re-arm VERIFY; substantive feature changes do.
+   Read this checkout's `package.json` after merging: run `pnpm ship:check` when
+   declared, otherwise follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`.
+   Only exit `0` passes; fix a failure or environment refusal before continuing.
+   Use background execution and its completion notification for long commands.
+   Push updates with `git push origin <BRANCH>`, then read the existing PR again
+   to set `<SHA>` to its new `headRefOid`. A non-fast-forward rejection requires
+   inspecting the new remote head and validating the integrated tree; never force
+   the push. Keep this PR; do not create another one.
 
 2. **Wait for GitHub to settle its mergeability**, in the background
    (`run_in_background: true`), and act on the completion notification:

@@ -77,33 +77,16 @@ There is no `.claude/verify-runtime.lock`: each worktree runs its own private st
 cannot ask the user questions mid-run. They read, judge, and may fix trivial issues
 in place.
 
-**Wave 2, once wave 1 has returned and its fixes are in: run the gate yourself, once,
-on that final tree, with `run_in_background: true`.**
+**Wave 2, once wave 1 has returned and its fixes are in: run local validation
+on that final tree yourself.** Read this checkout's own `package.json`. With a
+`ship:check` script run `pnpm ship:check`, adding `--add-tests`, `--add-package`
+or `--add-checks` only with `--reason` for a boundary automatic selection misses.
+Without it follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`, including its
+assertion-only sweep. Never narrow the selected checks.
 
-- The repo's `package.json` has `ship:gate`: `pnpm ship:gate --label verify`, with the
-  Bash `timeout` at `7200000` (a full gate may hold for 75 minutes, past the 30-minute
-  default), and the additions the diff needs with one `--reason` for them all — the
-  same judgment as `/ship` step 4
-  (what no import reaches: a contract crossed over HTTP or the database, text loaded
-  at runtime, `--full` for a change whose reach you cannot bound). It records the tree
-  it proved, machine-wide, and `/ship`, `pre-push` and the land queue reuse that
-  record for the identical tree: that is why a `/ship` after a green VERIFY is fast.
-- Otherwise: the repo's own lint, typecheck and test commands (`pnpm lint`,
-  `pnpm typecheck`, `pnpm test`, or what its `package.json` names), each its own
-  background call. Where the repo has a machine-wide gate lock
-  (`scripts/gate-lock.mjs`), the test command runs under it:
-  `node scripts/gate-lock.mjs run --label "verify test" -- pnpm test`, so it queues
-  behind the other worktrees' gates instead of running beside them.
-
-Record nothing else; the gate keeps its own record.
-
-Why the order (measured on two consecutive ships, 2026-10-07): launched together, the
-reviewer edited files while the gate was running both times. Every edit moved the
-tree, the gate's record stopped covering it, and the gate ran again. The gate is the
-only step keyed to the exact tree, so it runs on the tree the judges leave behind.
-
-**Do not `sleep`-poll while they work.** Specialists return on their own; the
-backgrounded gate notifies on completion. Polling was 46% of measured tool wall-clock.
+Commands that can exceed about 8 minutes use `run_in_background: true`; wait for
+the completion notification. Do not sleep-poll. Specialists may edit the tree, so
+validation runs after their final fixes. Any new fixes require validation again.
 
 ## Step 4 — collect verdicts
 
@@ -111,13 +94,9 @@ backgrounded gate notifies on completion. Polling was 46% of measured tool wall-
 - `jit-e2e-author` → READY | NEEDS_ATTENTION | NO_OP | BLOCKED | NOT_RUN
 - `rehydration-checker` → READY | NEEDS_ATTENTION | BLOCKED | NO_OP
 - `temporal-checker` → READY | NEEDS_ATTENTION | NEEDS_WORK | NO_OP
-- the gate → its exit: `0` pass; `1` fail (it names what failed); `2` refused — the
-  environment, not the code: do what its message says and run it again; `75` no slot
-  came free before its deadline: run it again; `143`, or a notice that it was stopped
-  at its time limit: the Bash ceiling stopped it and it judged nothing. Its wait for a
-  slot counts against that ceiling (a gate with heavy work queues for the machine's
-  one slot by default), so a gate queued behind others can be stopped although its
-  own run fits: run it again. A second stop is BLOCKED: surface it
+- local validation → `0` pass; `1` fail (names the failed step); `2` refused:
+  fix the named environment issue and retry. An interrupted command or any other
+  nonzero exit is not a pass. Surface a cause you cannot resolve as BLOCKED.
 
 ## Step 5 — aggregate
 
@@ -133,7 +112,8 @@ the user. A verification that did not happen is reported, never absorbed.
 ## After all return
 
 - **READY** → write `.claude/.verify-state.json` with the current `git rev-parse HEAD`
-  and timestamp. Suggest `/ship`.
+  and timestamp. `/ship` checks this before merging main or committing, so those
+  integration steps do not re-arm VERIFY. Suggest `/ship`.
 - **NEEDS_FIX** → fix in this chat, re-run **only** the failing judge, then the gate
   (wave 2) once more on the fixed tree.
 - **BLOCKED** → surface to the user. Do not ship.
