@@ -8,7 +8,9 @@ argument-hint: "[PR number or branch name]"
 # Merge
 
 Every command is one plain call with literal values. Never pipe the merge.
-Use this merge approval throughout; do not invoke another release skill.
+Use this merge approval throughout; do not invoke another release skill. It is
+spent by the PR becoming MERGED, never by a failed attempt, and covers the merge
+only: no deploy.
 Never rewrite history or force-push.
 Read main's newest `endoxia/main-health` status with
 `gh api repos/:owner/:repo/commits/main/statuses --jq '[.[] | select(.context == "endoxia/main-health")][0] // null'`.
@@ -80,9 +82,10 @@ range and promote gates production. Report missing or pending health too.
 
    **Merging does NOT deploy.** Deploy fires only on a `deploy-*` tag (or manual
    dispatch), never on a push to `main`. This brings work onto `main`; run
-   **`/deploy`** when you want it released. Where a project has a staging step
-   (Endoxia, slice 603) that tag reaches STAGING, and production is a separate
-   **`/promote`**.
+   **`/deploy`** when you want it released (unlike `/ship`, a `/merge` approval
+   does not cover that staging deploy; `/approve merge deploy` covers both). Where
+   a project has a staging step (Endoxia, slice 603) that tag reaches STAGING, and
+   production is a separate **`/promote`**.
 
 4. **The verdict comes from the PR, never from the merge's exit code:**
    `gh pr view <PR> --json state,mergedAt,mergeCommit --jq '{state, mergedAt, sha: .mergeCommit.oid}'`.

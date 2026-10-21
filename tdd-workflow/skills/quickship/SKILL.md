@@ -1,9 +1,10 @@
 ---
 name: quickship
-description: Validate, commit, merge origin/main and push directly to main without a PR. Runs when the user types /quickship, or after /approve quickship (one run).
+description: Validate, commit, merge origin/main and push directly to main without a PR, then deploy the pushed commit to staging. Runs when the user types /quickship, or after /approve quickship; that one approval covers the push and the staging deploy of what it pushed.
 release-actions: push-main
+release-follow-on: deploy-tag
 argument-hint: "[commit message]"
-allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py *)
+allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(date *), Bash(curl *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py *)
 ---
 
 # Quick Ship
@@ -14,6 +15,13 @@ allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *),
 - Status: !`git status --short`
 - Worktree: !`git rev-parse --show-toplevel`
 - Worktrees: !`git worktree list --porcelain`
+
+**The approval.** This run's approval (the typed `/quickship`, or
+`/approve quickship`) is spent by the push landing on `main`, never by invoking
+this skill or by a push that was rejected: retry in this session without asking
+again. It covers ONE push to `main` and then ONE staging deploy tag on exactly the
+commit that push put there (step 8). Production (`/promote`, `/release`,
+`/hotfix`) needs its own approval.
 
 1. **Only main, in the primary checkout.** Otherwise STOP and use /ship from the
    feature branch. Never switch branches in a shared tree. If nothing changed, STOP.
@@ -47,9 +55,34 @@ allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *),
    main tip; print red, pending or missing status and whether this change fixes a
    red. A red main does not block this push.
 7. **Push.** Before every push, `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py check --commit HEAD` must exit 0, so
-   nothing a hook or a later commit added goes out unreviewed. Then `git push origin main`. A
-   non-fast-forward rejection means main moved: fetch, merge, `integrate` and
-   validate again, then retry. Confirm the pushed commit; this does not deploy.
+   nothing a hook or a later commit added goes out unreviewed. Then `git push origin main`,
+   alone and unredirected: the release gate reads the commit it pushed from its
+   `<old>..<new>  main -> main` line. A non-fast-forward rejection means main
+   moved: fetch, merge, `integrate` and validate again, then retry. Confirm the
+   pushed commit `<P>` (`git rev-parse HEAD`, the `<new>` of that line).
+8. **Deploy what you pushed to staging, under this same approval.** First, whether
+   the project deploys at all: `gh api repos/:owner/:repo/actions/workflows/deploy.yml --jq .state`.
+   A 404 (no such workflow) means there is no staging deploy here: say so in one
+   line and stop. Otherwise read `${CLAUDE_PLUGIN_ROOT}/skills/deploy/SKILL.md` and
+   carry out its steps here, with `<SHA>` = `<P>`. Do not invoke `/deploy` through
+   the Skill tool: this approval covers exactly one `deploy-*` tag on `<P>` while
+   `<P>` is on origin's `main`; a tag on any other commit needs `/approve deploy`.
+   Create the tag on `<P>` before pushing it, then push it by its literal name in a
+   command of its own. Before tagging, make sure staging does not already serve a
+   commit that contains `<P>` (a tag on `<P>` would roll it back). Read what
+   staging SERVES: `gh api repos/:owner/:repo/environments/staging/variables/PUBLIC_URL --jq .value`
+   gives `<URL>`, and `curl --max-time 10 <URL>/api/health/live` answers JSON whose
+   `version` is the served commit `<SERVED>`. When either cannot be read, push NO
+   tag: no other source says what staging serves (the newest successful deploy
+   run may be a production-only `/hotfix`), and a tag on an older commit would
+   roll staging back. Report "staging deploy NOT RUN: staging's health route did
+   not answer" with `<URL>` (or that it could not be read) and `<P>`, and name
+   `/deploy` as the owner's follow-up. Otherwise
+   `git merge-base --is-ancestor <P> <SERVED>` (exit `128`: `git fetch --quiet origin <SERVED>`
+   first) exiting `0` means staging already serves `<P>`: report that and push
+   nothing.
+   Report the staging result as the deploy steps say; production stays untouched
+   until `/promote`.
 
 ## After the push
 

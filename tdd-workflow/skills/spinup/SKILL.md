@@ -1,6 +1,6 @@
 ---
 name: spinup
-description: Bring up THIS git worktree's own private runnable stack (own ports, DB, Temporal, headless Chrome) so the agent can run and self-verify the app in parallel with other worktrees. Light by default; `--full` for the heavy sidecars. For repos with a scripts/worktree-env.sh (see .claude/rules/worktree-runtime.md).
+description: Bring up THIS git worktree's own private runnable stack (own ports, DB, Temporal) so the agent can run and self-verify the app in parallel with other worktrees. Light by default; `--full` for the heavy sidecars. The browser is the harness's own when it has one; otherwise the worktree's own Chrome. For repos with a scripts/worktree-env.sh (see .claude/rules/worktree-runtime.md).
 allowed-tools: Bash(source *), Bash(. *), Bash(docker *), Bash(pnpm *), Bash(PORT=*), Bash(./scripts/*), Bash(bash scripts/*), Bash(git *)
 ---
 
@@ -52,6 +52,7 @@ bash scripts/worktree-stack.sh up core legal ml   # explicit roots
 
 `status` is the overview. `bash scripts/worktree-stack.sh down` is a person's manual
 soft-stop: it does not check whether another session still uses the stack.
+`up` starts no browser; step 5 says when one is needed.
 Use the numbered steps only in a repository without that script.
 
 ## Steps (do in order; STOP and surface any failure — never retry blindly)
@@ -96,9 +97,13 @@ Use the numbered steps only in a repository without that script.
    ```bash
    docker compose up -d core
    ```
-5. **Start this worktree's headless Chrome** (own profile, own CDP port — so
-   this session's browser tools never touch another worktree's cookies or
-   pages):
+5. **The browser.** When the harness has a browser of its own (in T3 Code the
+   `preview_*` tools), nothing is started: each agent opens its own tab on a
+   private profile and reaches the app with `preview_navigate` and
+   `target: { kind: "environment-port", port: <WT_BFF_PORT> }`. Only outside
+   such a harness, for Chrome DevTools MCP, start this worktree's headless
+   Chrome (own profile, own CDP port, so this session's browser tools never
+   touch another worktree's cookies or pages):
    ```bash
    ./scripts/worktree-chrome.sh
    ```
@@ -119,7 +124,7 @@ Use the numbered steps only in a repository without that script.
 7. **Report** the URLs for the self-verify loop:
    - App: `http://localhost:$WT_BFF_PORT` (log in `dev@example.com` / `dev-password-2026!`)
    - Temporal UI: `http://localhost:$WT_TEMPORAL_UI_PORT` (`--profile debug` only)
-   - Chrome CDP: `http://127.0.0.1:$WT_CDP_PORT`
+   - Chrome CDP, when step 5 started it: `http://127.0.0.1:$WT_CDP_PORT`
    - psql: `docker exec -it ${COMPOSE_PROJECT_NAME}-postgres-1 psql -U endoxia -d endoxia_workspace`
    - Say which profile is up and what it therefore cannot do.
 

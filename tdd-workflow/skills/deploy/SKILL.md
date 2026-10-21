@@ -23,10 +23,13 @@ and one wait, and a newer tag replaces the waiting one. So `/deploy` first asks
 whether a run in flight already builds a commit that contains `main`'s tip; if
 one does, it waits on that run and pushes nothing. Otherwise it tags.
 
-**This skill starts (or joins) the run and hands the session back.** It does not
-watch the run in the foreground: that held the session for the whole ~22-minute
-run, 93 minutes of session time a day. The verdict arrives later, from a
-background wait that reads the run's `conclusion`.
+**This skill starts (or joins) the run and stays with it until it concludes**
+(owner, 2026-10-20). The turn does not end, and nothing like "I'll report back"
+is said, before the run's `conclusion` is read and reported: run 39493655874
+was refused by GitHub for billing 7 s after its dispatch, 2 s after the thread
+that started it had settled, and nobody noticed (the third billing refusal in
+8 days). The wait is `release-run.py await`, in foreground slices that each fit
+one Bash call; it reads the API's `conclusion`, never a watch's exit code.
 
 ## Context (pre-computed)
 
@@ -94,46 +97,70 @@ Before joining or tagging, read the newest health status for this exact SHA:
    confirm with `gh run view <id> --json createdAt,event` that it was created after
    the push.
 
-6. **Hand back.** Tell the user in one or two lines: the deploy of `<sha8>` runs
-   as run `<id>` (`<url>`), or, when joined, rides on run `<id>`, which builds
-   `<run8>` and contains it; staging serves it when the run succeeds; production
-   is untouched until `/promote`.
+6. **Say what is running.** In one or two lines: the deploy of `<sha8>` runs as
+   run `<id>` (`<url>`), or, when joined, rides on run `<id>`, which builds
+   `<run8>` and contains it; it is being watched to its end in this turn;
+   production is untouched until `/promote`.
 
-7. **The verdict, in the background.** Start, with `run_in_background: true`:
-   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py await <id> --deadline-min 190`
-   and end your turn. Do not poll it and do not `sleep`: the completion
-   notification wakes you. When another deploy run is `in_progress` ahead of
-   `<id>` (step 3 listed one, or `<id>` is not `in_progress` itself), use
+   **Inside T3 Code** (the `mcp__t3-code__*` tools are present), the thread must
+   not hand back as finished while a release run it started is open: every
+   message until the verdict states the run id and that it is being watched,
+   and the turn continues with step 7.
+
+7. **The verdict, in this turn.** Run in the foreground, with the Bash tool's
+   `timeout` at 600000 (its maximum):
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py await <id> --deadline-min 190 --slice-min 9`
+   Exit 6 (`release_run_still_running`) means the slice ended and the run goes
+   on: say in one line "run `<id>` is `<status>`, still watching" and run the
+   same command again. No `sleep`, no run watch, and no end of the turn between
+   slices. When another deploy run is `in_progress` ahead of `<id>`
+   (step 3 listed one, or `<id>` is not `in_progress` itself), use
    `--deadline-min 365` instead: `<id>` starts only when that run ends.
 
-   The 190 minutes are the run's own bound: the longest chain of job
-   `timeout-minutes` from the tag to staging is 175 (deploy.yml: `changes` 10 →
-   `build-and-push` or `docx-sandbox-image` 45 → `release-manifest` 5; then
-   release.yml: `verify-images` 10 → `deploy` 85 → `verify` 10 → `notify` 10), plus
-   15 minutes for runners to pick the jobs up (a placeholder: GitHub does not bound
-   queueing). 365 is the run ahead's 175 plus this one's 190. Re-derive when a
-   timeout in either workflow changes. At the bound the script prints
-   `release_run_await_deadline` with the run's status: say the run is still going
-   and give its URL; that is not a failure.
+   The deadline counts from the run's own start (GitHub's `run_started_at`), so
+   every slice measures against the same bound. The 190 minutes: the longest
+   chain of job `timeout-minutes` from the tag to staging is 175 (deploy.yml:
+   `changes` 10 → `build-and-push` or `docx-sandbox-image` 45 →
+   `release-manifest` 5; then release.yml: `verify-images` 10 → `deploy` 85 →
+   `verify` 10 → `notify` 10), plus 15 minutes for runners to pick the jobs up (a
+   placeholder: GitHub does not bound queueing). 365 is the run ahead's 175 plus
+   this one's 190. Re-derive when a timeout in either workflow changes. A slice
+   is 9 minutes because the Bash tool stops a foreground command at 10.
+   At the run's bound the script exits 5 with `release_run_await_deadline NOT CONCLUDED`.
+   Then the FIRST line of the message is: "NOT CONCLUDED: run `<id>` is `<status>`
+   past its own 190-minute bound (365 behind another run) (`<url>`); it has no
+   verdict and is not done."
+   Never report it as succeeded, failed or finished, and never say "I'll report
+   back". The run stays visible: `pnpm release:status` lists it under "Open release
+   runs" until it concludes, so the next status check shows it; inside T3 Code the
+   thread's last message names the run id as open. This is the only way the turn
+   ends without a verdict.
 
-8. **When the notification arrives.** Confirm with a second read,
-   `gh run view <id> --json status,conclusion`, and report:
-   - `conclusion` `success` → "STAGING: https://staging.endoxia.ai serves `<sha8>`;
-     production unchanged, promote with /promote."
+8. **The verdict.** Confirm with a second read,
+   `gh run view <id> --json status,conclusion,headSha`, and report:
+   - `conclusion` `success` → "STAGING: https://staging.endoxia.ai serves `<sha8>`
+     (run `<id>`); production unchanged, promote with /promote."
    - `cancelled` → a newer tag replaced this waiting run (or someone cancelled
      it). Step 3 again: a run in flight that contains `<SHA>` is the one to follow
      (steps 6-7 with its id; no tag). None, and this /deploy pushed no tag yet →
      step 4. None after a tag → report it cancelled.
    - anything else → "DEPLOY `<conclusion>`: staging still serves the previous
-     release; production is untouched." Then the reason:
-     `gh run view <id> --log-failed > /tmp/deploy-<id>.log 2>&1`, and read the
-     failing step from that file. A transient error (registry pull, token,
-     runner) on a run this /deploy tagged is retried with
-     `gh run rerun <id> --failed`, which its approval covers once; on a joined
-     run this /deploy pushed nothing, so step 4 (a new tag) is the retry. A code
-     failure needs a fix and a new /deploy.
+     release; production is untouched." Then the REASON, which the await printed
+     under its `conclusion=` line (`release-run.py reason <id>` prints it again):
+     - `reason=billing …` → report that line as it stands: GitHub refused to start
+       the jobs, nothing was built, and it is the owner's action (Settings →
+       Billing & plans). No rerun and no new tag until the owner says billing is
+       fixed; then `gh run rerun <id> --failed`, which this approval covers once.
+     - `reason=job-failure …` → name the failed job, its step and the first
+       annotation. For more, `gh run view <id> --log-failed > /tmp/deploy-<id>.log 2>&1`
+       and read the failing step from that file. A transient error (registry
+       pull, token, runner) on a run this /deploy tagged is retried with
+       `gh run rerun <id> --failed`, which its approval covers once; on a joined
+       run this /deploy pushed nothing, so step 4 (a new tag) is the retry. A code
+       failure needs a fix and a new /deploy.
 
 **Report the `conclusion`, never an exit code.** "It is live" may only follow
 `status == completed` and `conclusion == success`, confirmed by the second read.
 A run watch with `--exit-status` once exited 0 for run 35550388776 whose conclusion
-was `failure`; the background wait reads the API for exactly that reason.
+was `failure`; the await reads the API for exactly that reason. The report names
+the environment (staging), the SHA it serves and the run, or the failure's reason.

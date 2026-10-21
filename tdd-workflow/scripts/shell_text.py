@@ -101,6 +101,9 @@ def simple_commands(masked: str) -> list[tuple[int, int, str]]:
         c = masked[i]
         two = masked[i:i + 2]
         sep = None
+        if c == "|" and i > 0 and masked[i - 1] == ">":  # `>|file`: a redirection, no pipe
+            i += 1
+            continue
         if two in ("&&", "||", "|&"):
             sep = two
         elif c == "|":

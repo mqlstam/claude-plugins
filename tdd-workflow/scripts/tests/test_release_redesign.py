@@ -8,7 +8,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from test_release_approval_gate import FakeResolver, Transcript, gate, no_github, no_sleep, on_branch
+from test_release_approval_gate import FakeResolver, Transcript, gate, no_sleep, on_branch
 from test_release_skills import ROOT, commands, read, skill
 
 INTEGRATION_COMMAND = 'git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main'
@@ -35,7 +35,7 @@ class DirectReleaseTest(unittest.TestCase):
                         {"tool_input": {"command": "gh pr merge 42 --squash --match-head-commit abc"},
                          "transcript_path": path, "cwd": "/repo"},
                         FakeResolver(), sleep=no_sleep, branch_of=on_branch("feature"),
-                        scope=gate.GUARD_ALL, history_scope=gate.GUARD_ALL, run_info=no_github)
+                        scope=gate.GUARD_ALL, history_scope=gate.GUARD_ALL, world=gate.World())
                 self.assertIsNone(reason)
             finally:
                 os.unlink(path)
@@ -50,14 +50,22 @@ class DirectReleaseTest(unittest.TestCase):
         self.assertIsNotNone(bash_decision(transcript, command))
 
     def test_background_merge_holds_approval_until_a_trusted_failure(self):
-        from test_release_approval_gate import bash_decision
+        from test_release_approval_gate import FakeWorld, bash_decision
         command = "gh pr merge 42 --squash --match-head-commit abc"
-        for status in (None, "completed", "killed", "stopped", "unknown"):
+        for status in (None, "completed"):
             transcript = Transcript().typed("approve", "merge")
             task = transcript.bash(command, background=True)
             if status:
                 transcript.notify(task, status, 0)
             self.assertIsNotNone(bash_decision(transcript, command), status)
+        # Ended without a verdict (killed, stopped, unknown): GitHub says whether it merged.
+        for status in ("killed", "stopped", "unknown"):
+            transcript = Transcript().typed("approve", "merge")
+            task = transcript.bash(command, background=True)
+            transcript.notify(task, status, 0)
+            self.assertIsNotNone(bash_decision(transcript, command,
+                                               world=FakeWorld(prs={"42": ("MERGED", "a" * 40)})), status)
+            self.assertIsNone(bash_decision(transcript, command), status)
         transcript = Transcript().typed("approve", "merge")
         task = transcript.bash(command, background=True)
         transcript.notify("other-task", "failed", 1)
@@ -77,7 +85,7 @@ class DirectReleaseTest(unittest.TestCase):
 class ReleaseRedesignContractTest(unittest.TestCase):
     def test_version_and_no_retired_mechanisms(self):
         manifest = json.loads(read(os.path.join(ROOT, ".claude-plugin", "plugin.json")))
-        self.assertEqual(manifest["version"], "1.7.0")
+        self.assertEqual(manifest["version"], "1.8.1")
         for relative in ("skills/ship/SKILL.md", "skills/ship/generic.md", "skills/merge/SKILL.md", "skills/quickship/SKILL.md",
                          "skills/feature/phases/04-verify.md", "skills/refactor/phases/05-verify.md",
                          "skills/tdd-methodology/SKILL.md", "scripts/instance-manager.py",

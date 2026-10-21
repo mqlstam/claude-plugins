@@ -62,6 +62,12 @@ uncommitted, does not establish it. Never override the stack cap or stop another
 session's stack; at the cap, runtime verification is NOT RUN and the rest of VERIFY
 carries on.
 
+**Empty the evidence directory** in every VERIFY, in scope or not:
+`.claude/verify-evidence/` unless the project names another (inside the checkout,
+ignored by git). It holds this VERIFY's screenshots, recordings and manifest only,
+round N under `r<N>/`; an earlier VERIFY's files would otherwise reach the pull
+request as if they were this change's.
+
 ## Step 2 - launch in one message
 
 **a. Correctness review.**
@@ -99,9 +105,13 @@ carries on.
 
 **b. Runtime verification**, when in scope: the `runtime-verifier` agent with
 `model: "opus"`. Give it the slice, the base, the stack URL, the profile, the
-services that profile leaves out, and how each changed service was made to run the
-current code. Launch it as soon as the stack answers and runs that code. Do not hold
-the review back for the stack.
+services that profile leaves out, how each changed service was made to run the
+current code, and the round's evidence directory (`.claude/verify-evidence/r1/`). It
+drives the harness's built-in browser when there is one (in T3 Code the `preview_*`
+tools, a private profile, its own tab) and the project's browser tooling otherwise,
+and saves a screenshot per verified criterion and one short recording per user flow.
+Launch it as soon as the stack answers and runs that code. Do not hold the review
+back for the stack.
 
 **c. Local validation**, in the background, on the current tree. With a `ship:check`
 script in this checkout's `package.json`, run `pnpm ship:check`. Add `--add-tests`,
@@ -139,7 +149,8 @@ context. Then read every finding against the code.
   round. A fix to a runtime finding can introduce the race the runtime re-check does
   not exercise.
 - **Re-run the runtime criteria** whose implementation or prerequisites the fix
-  changed, on a stack running the fixed code.
+  changed, on a stack running the fixed code, with the next round's evidence
+  directory (`r2/`, `r3/`). A criterion's evidence is the newest round's that ran it.
 - **Judge "trivial" by what the change can reach, not by its length.** A one-line
   change to authorization, persistence order, concurrency or workflow history is
   substantive. Only a fix that cannot change behaviour (a message string, a comment)
@@ -167,7 +178,8 @@ Do not stop the stack yourself. Another session may share this worktree and be u
 it; the project's session-end and idle hooks soft-stop it once no live session needs
 it, which a stop from inside one session cannot know.
 
-- **READY** -> run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`. It
+- **READY** -> write the evidence manifest (below) when runtime verification was in
+  scope, then run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`. It
   writes `.claude/.verify-state.json` with the verdict bound to the exact contents
   reviewed: every tracked and untracked, non-ignored file, by mode and blob id.
   `/ship`, `/quickship` and `/merge` run `verify-state.py check` before merging main
@@ -181,3 +193,39 @@ it, which a stop from inside one session cannot know.
   runtime evidence, and anything NOT RUN. Suggest `/ship`.
 - **NEEDS_FIX** -> fix in this chat, then step 4.
 - **BLOCKED** -> surface it to the user. Do not ship.
+
+### The evidence manifest
+
+The verdict's screenshots and recordings, for `/ship` to attach to the pull request.
+Write `.claude/verify-evidence/manifest.json` (the evidence directory's root) from the
+verifier reports' evidence lines, keeping for each criterion the newest round that ran
+it:
+
+```json
+{
+  "verdict": "READY",
+  "recordedAt": "<ISO 8601 time>",
+  "slice": "<slice doc path or task>",
+  "items": [
+    {
+      "path": ".claude/verify-evidence/r1/01-sign-in.png",
+      "kind": "screenshot",
+      "criterion": "<the acceptance criterion, as the slice words it>",
+      "caption": "<one sentence: what the reader sees>"
+    },
+    {
+      "path": ".claude/verify-evidence/r2/02-upload-flow.mp4",
+      "kind": "recording",
+      "criterion": "<criterion>",
+      "caption": "<sentence>"
+    }
+  ],
+  "notRun": [{ "criterion": "<criterion>", "reason": "<the missing service or reason>" }]
+}
+```
+
+Paths are relative to the checkout and every one must exist. `kind` is `screenshot`
+or `recording`. A criterion runtime verification did not run goes under `notRun` with
+its reason, so the pull request shows it beside the evidence; NOT RUN is never a pass
+there either. Runtime verification out of scope (no observable effect) writes no
+manifest.

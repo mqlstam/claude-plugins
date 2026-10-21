@@ -131,11 +131,129 @@ class ReleaseRunTest(unittest.TestCase):
         seq = [{"status": "in_progress", "conclusion": "success", "url": "u"}]
         (code, line), waited = self.with_gh(seq, rr.await_run, "9", None, 90, 30)
         self.assertEqual((code, waited), (5, 90))
-        self.assertIn("release_run_await_deadline", line)
+        self.assertIn("release_run_await_deadline NOT CONCLUDED run_id=9 status=in_progress", line)
 
     def test_await_requires_a_derived_deadline(self):
         with self.assertRaises(SystemExit):
             rr.main(["await", "9"])
+
+    def test_a_failed_verdict_carries_its_reason(self):
+        seq = [{"status": "completed", "conclusion": "failure", "url": "u"}]
+        old = rr.gh_json
+        rr.gh_json = answers(seq)
+        try:
+            code, out = rr.await_run("9", None, 600, 30, explain=lambda *_: (1, ["reason=billing x"]),
+                                     clock=Clock().now, sleep=lambda _s: None)
+        finally:
+            rr.gh_json = old
+        self.assertEqual(code, 1)
+        self.assertEqual(out.splitlines(), ["conclusion=failure run_id=9 url=u", "reason=billing x"])
+
+    def test_a_slice_ends_with_exit_6_and_the_bound_counts_from_the_run_start(self):
+        # The run started 100 min before this call: of a 190 min bound, 90 remain;
+        # a 9 min slice ends with 81 left and asks to be run again.
+        now = 1_800_000_000.0
+        started = "2027-01-15T06:20:00Z"  # 100 min before `now`
+        self.assertEqual(rr._epoch(started), now - 6000)
+        seq = [{"status": "in_progress", "conclusion": "", "url": "u", "startedAt": started}]
+        clock = Clock()
+        old = rr.gh_json
+        rr.gh_json = answers(seq)
+        try:
+            code, line = rr.await_run("9", None, 190 * 60, 30, slice_s=9 * 60, clock=clock.now,
+                                      sleep=clock.sleep, wall=lambda: now)
+            self.assertEqual((code, clock.t), (6, 540))
+            self.assertIn("release_run_still_running", line)
+            self.assertIn("81min left of the run's 190min bound", line)
+            # Started 200 min ago: past its bound on the first read, whatever the slice.
+            clock = Clock()
+            code, line = rr.await_run("9", None, 190 * 60, 30, slice_s=9 * 60, clock=clock.now,
+                                      sleep=clock.sleep, wall=lambda: now + 6000)
+            self.assertEqual((code, clock.t), (5, 0))
+            self.assertIn("release_run_await_deadline", line)
+        finally:
+            rr.gh_json = old
+
+    def test_the_slice_fits_one_foreground_bash_call(self):
+        # Claude Code's Bash tool stops a foreground command at 600000 ms at most.
+        self.assertLess(rr.FOREGROUND_SLICE_MIN * 60 + rr.GH_CALL_TIMEOUT_S, 600)
+
+
+FIXTURES = os.path.join(HERE, "fixtures", "release-run")
+
+
+def fixture(name):
+    with open(os.path.join(FIXTURES, name), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+class ReleaseRunReasonTest(unittest.TestCase):
+    """Recorded from EndoxiaBV/Endoxia: run 39493655874 (2026-10-20, every job refused
+    for billing) and run 39389020404 (2026-10-20, the integration suite failed)."""
+
+    BILLING = ("reason=billing GitHub Actions refused to start jobs: billing or spending limit; "
+               "fix under Settings → Billing & plans")
+
+    def annotations(self, by_job):
+        return lambda job: by_job.get(job.get("databaseId"))
+
+    def test_a_billing_refusal_is_one_owner_action_line(self):
+        view = fixture("run-39493655874-billing.view.json")
+        refused = fixture("annotations-118873000702-billing.json")
+        lines = rr.classify(view, lambda _job: refused)
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith(self.BILLING), lines[0])
+        self.assertIn("owner action; 7 of 7 failed jobs were never started", lines[0])
+
+    def test_a_test_failure_names_the_job_step_and_annotations_not_billing(self):
+        view = fixture("run-39389020404-test-failure.view.json")
+        notes = fixture("annotations-118515764377-test-failure.json")
+        lines = rr.classify(view, self.annotations({118515764377: notes}))
+        self.assertFalse([l for l in lines if "billing" in l], lines)
+        self.assertEqual(lines[0], "reason=job-failure 1 failed job(s):")
+        self.assertEqual(lines[1], "job failed: Integration suite (real Postgres) (failure), step: Integration suite")
+        self.assertIn("  annotation: BudgetDeniedError: LLM token reservation denied — weekly allowance "
+                      "exhausted for user 63f52314-8aa5-497c-99d0-3312623dab04", lines)
+        # A notice (the runner-image migration) is not a reason.
+        self.assertFalse([l for l in lines if "ubuntu-latest label" in l], lines)
+
+    def test_the_other_wordings_of_a_billing_refusal(self):
+        for message in ("The job was not started because your account is locked due to a billing issue.",
+                        "The job was not started because recent account payments have failed or your "
+                        "spending limit needs to be increased. Please check the 'Billing & plans' section"):
+            self.assertTrue(rr.BILLING_REFUSAL.search(message), message)
+        self.assertFalse(rr.BILLING_REFUSAL.search("Process completed with exit code 1."))
+        # A test that merely talks about a spending cap is not GitHub refusing the job.
+        self.assertFalse(rr.BILLING_REFUSAL.search("BudgetDeniedError: SPEND_CAP_EXCEEDED spending limit"))
+
+    def test_a_run_without_jobs_and_unreadable_annotations_are_named(self):
+        lines = rr.classify({"conclusion": "startup_failure", "jobs": []}, lambda _j: [])
+        self.assertTrue(lines[0].startswith("reason=no-jobs conclusion=startup_failure"), lines)
+        view = fixture("run-39389020404-test-failure.view.json")
+        lines = rr.classify(view, lambda _j: None)
+        self.assertEqual(lines, ["reason=annotations-unread for Integration suite (real Postgres): "
+                                 "`gh api` failed; read `gh run view <id> --log-failed`"])
+
+    def test_reason_reads_each_failed_job_once_from_the_runs_own_repository(self):
+        view = {**fixture("run-39493655874-billing.view.json"), "status": "completed"}
+        refused = fixture("annotations-118873000702-billing.json")
+        calls = []
+
+        def fake(args):
+            calls.append(args)
+            return view if args[:2] == ["run", "view"] else refused
+
+        old = rr.gh_json
+        rr.gh_json = fake
+        try:
+            code, lines = rr.reason("39493655874", "EndoxiaBV/Endoxia")
+        finally:
+            rr.gh_json = old
+        self.assertEqual(code, 1)
+        self.assertTrue(lines[0].startswith(self.BILLING))
+        api = [c for c in calls if c[0] == "api"]
+        self.assertEqual(len(api), 7, "one read per failed job")
+        self.assertEqual(api[0], ["api", "repos/EndoxiaBV/Endoxia/check-runs/118873000702/annotations?per_page=100"])
 
 
 class FakeGhEndToEndTest(unittest.TestCase):

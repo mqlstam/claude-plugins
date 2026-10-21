@@ -13,9 +13,9 @@ reload, a row that is never written.
 ## Before you start
 
 The parent gives you the slice or task description, the diff base, the stack's URL,
-the profile that is running, the services that profile leaves out, and how it made
-each changed service run the current code. Read the acceptance criteria and the diff.
-Then confirm the stack answers, in one call. If it does not, report
+the profile that is running, the services that profile leaves out, how it made
+each changed service run the current code, and this round's evidence directory.
+Read the acceptance criteria and the diff. Then confirm the stack answers, in one call. If it does not, report
 `BLOCKED: stack not reachable at <url>` and stop. The parent owns the stack's
 lifecycle, so do not start, restart or rebuild it yourself.
 
@@ -24,8 +24,43 @@ the change, or a dev server holding a stale module. Check the parent's freshness
 evidence against the services you will exercise. When the reviewed change cannot be
 shown to be running, report those criteria NOT RUN, never VERIFIED.
 
-Read the project's instructions for how to sign in on a dev stack and which tools it
-uses to drive a browser.
+Read the project's instructions for how to sign in on a dev stack and what it adds
+about browsers.
+
+## The browser
+
+- **The harness's built-in browser first, when it has one.** In T3 Code that is the
+  `preview_*` tools: open your own tab with `preview_open` (`reuseExistingTab: false`,
+  `open: false` unless the user should watch), on a private profile (the one
+  `preview_status` lists as incognito), and pass the returned `tabId` on every call,
+  because other agents in the same session drive tabs of their own. Never use the
+  default profile: it holds the user's own logins. Reach a dev server with
+  `preview_navigate` and `target: { kind: "environment-port", port }`.
+  `preview_snapshot` gives the page's semantic tree and diagnostics; read them for
+  console errors and failed requests.
+- **Outside such a harness**, the project's browser tooling: Chrome DevTools MCP
+  against the project's own browser, or the Playwright CLI.
+
+## Evidence
+
+Keep evidence for every claim: a screenshot, the request and response, the SQL and
+its result, or the log line. Files go in the evidence directory the parent gives you,
+`.claude/verify-evidence/r<N>/` for round N unless the project names another; it is
+inside the checkout and ignored by git (confirm with `git check-ignore`), because
+browser tools can refuse paths outside the checkout and nothing there may be
+committed.
+
+- **A screenshot for every criterion you verify in a browser,** taken where the
+  effect shows. With `preview_snapshot` pass `save: true` and copy the returned
+  `screenshotPath` into the evidence directory; the harness's own copy lives outside
+  the checkout and is not kept.
+- **One short recording per user flow,** when the criterion is a flow rather than a
+  state: start it right before the first step (`preview_recording_start`), stop it
+  right after the effect shows (`preview_recording_stop`), and copy the returned file
+  into the evidence directory. Keep it to the flow itself, a few seconds to about a
+  minute; a long recording is not watched and may be too large to attach.
+- Name files so they sort in the order of the criteria (`01-<criterion>.png`,
+  `02-<flow>.mp4`).
 
 ## How to verify
 
@@ -44,10 +79,6 @@ uses to drive a browser.
 5. **Write down anything wrong you run into**, even outside the slice, and report it
    separately.
 
-Keep evidence for every claim: a screenshot, the request and response, the SQL and its
-result, or the log line. Save files in an ignored directory inside the checkout (check
-with `git check-ignore`), because browser tools can refuse paths outside it.
-
 When the running profile cannot serve a path, report it as **NOT RUN** and name the
 missing service. It is never a FAIL, and never a pass.
 
@@ -58,7 +89,7 @@ missing service. It is never a FAIL, and never a pass.
 - Do not write a permanent end-to-end spec unless the parent asks for one.
 - Data you create stays in the worktree's own database, under test identities.
 - Never sleep-poll. Run a long wait in the background and wait for its notification.
-- Leave the stack running when you finish.
+- Leave the stack running when you finish. Close the browser tabs you opened.
 
 ## Report
 
@@ -79,8 +110,14 @@ Defects:
 Outside the slice:
   - <defect, same shape>
 
+Evidence files (one line each, in criterion order):
+  - <path in the checkout> | <criterion> | <one-sentence caption: what it shows>
+
 VERDICT: READY | NEEDS_FIX | BLOCKED | NOT_RUN
 ```
+
+List every screenshot and recording you saved, including those of a DEFECT. The
+caption says what the reader sees, not what you did.
 
 **NOT_RUN** means there was something to verify and it did not happen. Say why. It is
 reported to the user, never absorbed into a pass.

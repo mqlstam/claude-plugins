@@ -9,7 +9,8 @@ allowed-tools: Bash(source *), Bash(. *), Bash(./scripts/*), Bash(bash scripts/*
 
 Runs the repo's hard-refusing teardown script. Removes only **this** worktree
 project's containers, its label-scoped volumes, its `wt-*` image tags and the
-headless Chrome profile it left under `~/.cache/cdp/<slug>`; canonical
+headless Chrome profile under `~/.cache/cdp/<slug>`, when one was started for
+Chrome DevTools MCP (a harness's own browser, T3 Code's, leaves none); canonical
 `endoxia_*` data is untouched. It refuses if `COMPOSE_PROJECT_NAME` is empty,
 `endoxia` (canonical), or not a `wt-*` project — never `docker compose down -v`.
 

@@ -69,14 +69,24 @@ class ReleaseSkillsTest(unittest.TestCase):
             self.assertRegex(text, r"gh pr view <PR> --json state[^`]*mergeCommit", name)
             self.assertIn("git/refs/heads/<BRANCH>", text, name)
 
-    def test_deploy_hands_back_at_the_run_id(self):
+    def test_deploy_waits_for_the_verdict_inside_the_turn(self):
+        # Owner, 2026-10-20: run 39493655874 was refused for billing 2 s after its T3
+        # thread settled, and nobody noticed. The run is watched to its end.
         text = skill("deploy")
         cmds = commands(text)
-        self.assertFalse([c for c in cmds if c.startswith("gh run watch")], "no foreground watch")
+        self.assertFalse([c for c in cmds if c.startswith("gh run watch")], "no gh run watch")
         self.assertIn("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py find deploy.yml <SHA>", cmds)
-        self.assertIn("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py await <id> --deadline-min 190", cmds)
-        self.assertIn("gh run view <id> --json status,conclusion", cmds)
+        self.assertIn("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py await <id> --deadline-min 190 "
+                      "--slice-min 9", cmds)
+        self.assertIn("gh run view <id> --json status,conclusion,headSha", cmds)
         self.assertIn("git push origin deploy-<TS>", cmds)
+        self.assertNotIn("end your turn", text)
+        self.assertIn("T3 Code", text)
+        self.assertIn("reason=billing", text)
+        # At the bound the run is open, never done, and stays visible.
+        self.assertIn("release_run_await_deadline NOT CONCLUDED", text)
+        self.assertIn("pnpm release:status", text)
+        self.assertIn("Open release", text)
 
 
 class LocalValidationSkillsTest(unittest.TestCase):
