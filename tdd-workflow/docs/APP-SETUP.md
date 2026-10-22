@@ -141,3 +141,14 @@ token expires; it never prints the key or the token. Then reload the plugin
   requested" or a newer commit means no approval. It covers that one merge and the one staging tag on its
   merge commit, and is spent by the merge taking effect. Deploy, promote, release
   and hotfix are never approved by a review.
+
+## Follow-up: take your own gh login out of the agents' reach
+
+The release gate refuses an agent writing a review in any form it can read
+(`gh pr review`, the REST and GraphQL review writes), because your approving review
+is the approval. That is a text guard against an agent's mistake, like the rest of
+the gate, not a wall: the agents run with your own `gh` login, which can review.
+The hard version is an agent that holds no identity but the App's (which GitHub
+never lets approve its own PR): your `gh` login kept out of the agents' sessions,
+with merges, tags and evidence uploads moved to an identity that cannot review for
+you. Not done in 1.9.0.

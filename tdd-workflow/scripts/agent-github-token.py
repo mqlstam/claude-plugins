@@ -42,6 +42,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import agent_app  # noqa: E402
+import push_refs  # noqa: E402
 
 API = "https://api.github.com"
 # The version the plugin's other REST calls assume; supported until 2028-03-10
@@ -58,10 +59,11 @@ REFRESH_MARGIN_S = 600
 # The token exchange is one small POST; 0.4-0.9 s measured for gh reads here.
 HTTP_TIMEOUT_S = 30
 
-GIT_PUSH_OPTIONS = {"-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--no-verify",
-                    "--force-with-lease", "--porcelain"}
+# No force of any kind (--force, --force-with-lease, --force-if-includes, a `+`
+# refspec): the skills never force a push.
+GIT_PUSH_OPTIONS = {"-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--no-verify", "--porcelain"}
 GH_PR_SUBCOMMANDS = {"create", "edit", "view", "comment", "ready"}
-PROTECTED = {"main", "master", "HEAD", "@"}  # `@` alone is HEAD to git
+PROTECTED = {"main", "master"}
 
 
 class TokenError(Exception):
@@ -165,9 +167,9 @@ def _refuse_push(args: list[str]) -> None:
     if len(refs) != 2:
         raise TokenError("push exactly one branch to one remote: `git push -u origin <branch>`")
     ref = refs[1]
-    dest = ref.split(":", 1)[-1]
-    if (any(c in ref for c in "+*") or ref.startswith(":") or dest.startswith("refs/tags/")
-            or dest.removeprefix("refs/heads/") in PROTECTED or dest.startswith("deploy-")):
+    kind, name = push_refs.destination(ref)  # git's own reading, shared with the release gate
+    if (push_refs.is_force(ref) or "*" in ref or ref.startswith(":") or kind != "branch"
+            or name in PROTECTED or (name or "").startswith("deploy-")):
         raise TokenError(f"`git push {' '.join(refs)}` is not a feature branch push; releases are not run as the App")
 
 

@@ -183,6 +183,20 @@ is fail-closed: a command is charged unless it demonstrably did not take effect.
     environment;
   * GitHub that cannot be asked (or the lookup budget spent) is "took effect".
 
+REVIEWS ARE THE OWNER'S (owner, 2026-10-22). The owner's approving review on
+GitHub of a PR the agent App opened approves that PR's merge (agent_app.py), so a
+review written by an agent would be an approval it gave itself. Every review WRITE
+is refused, whatever is approved: `gh pr review` in any form, a REST write under
+`pulls/<n>/reviews` (create, submit, dismiss, update), and the GraphQL review
+mutations; a GraphQL request whose query is in a file or on standard input is
+refused too. Reading reviews stays free. Like every rule here this is a text guard
+against an agent's mistake, not against a rogue agent (owner, 2026-10-21): the
+agent runs as the owner's gh login, which can review. The hard version is to take
+the owner's gh login out of the agents' reach, so that the only identity an agent
+holds is the App's, which cannot approve its own PR (docs/APP-SETUP.md, follow-up).
+GraphQL mutations that merge, auto-merge, write a ref or create a release are the
+release actions they are (`_GRAPHQL_MUTATIONS`).
+
 RELEASE COMMANDS ARE PLAIN WORDS (owner, 2026-10-20). Every release command, and
 every `git push` or `gh api` write in a guarded repo, is judged only when each word
 of it is a plain word (letters, digits, `._/:@+=,-`) or one of `>f`, `>>f`, `2>f`,
@@ -259,6 +273,7 @@ from typing import NamedTuple
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shell_text import inert_regions, mask_inert, simple_commands  # noqa: E402
 import agent_app  # noqa: E402
+import push_refs  # noqa: E402
 
 ACTION_CLASSES = ("merge", "push-main", "deploy-tag", "dispatch")
 
@@ -899,12 +914,23 @@ def _match_head(args: list[str]) -> str | None:
     """The commit `gh pr merge --match-head-commit <SHA>` lets GitHub merge, or None.
     A repeated flag is None: gh keeps its last value, so no one value can be read as
     the head the review approved (review finding, 2026-10-22)."""
-    found = []
-    for i, tok in enumerate(args):
+    found, i = [], 0
+    while i < len(args):
+        tok = args[i]
+        if tok == "--":
+            break
         if tok == "--match-head-commit":
             found.append(args[i + 1] if i + 1 < len(args) else None)
-        elif tok.startswith("--match-head-commit="):
+            i += 2
+            continue
+        if tok.startswith("--match-head-commit="):
             found.append(tok.split("=", 1)[1])
+        elif tok in _MERGE_FLAGS_WITH_VALUE or tok in ("-R", "--repo"):
+            # pflag gives a value flag the next word, whatever it looks like
+            # (gh 2.102.1 `gh pr merge --help`: -A -b -F -t and their long forms).
+            i += 2
+            continue
+        i += 1
     return found[0] if len(found) == 1 else None
 
 
@@ -993,7 +1019,7 @@ _GIT_GLOBAL_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
                           "--super-prefix", "--attr-source"}
 _GH_GLOBAL_WITH_VALUE = {"-R", "--repo", "--hostname"}
 _GH_SUBCOMMANDS = {("pr", "merge"): "gh-pr-merge", ("workflow", "run"): "gh-workflow-run",
-                   ("run", "rerun"): "gh-run-rerun"}
+                   ("run", "rerun"): "gh-run-rerun", ("pr", "review"): "gh-pr-review"}
 # Wrapper options that start the program in another directory.
 _WRAPPER_CHDIR = {("env", "-C"), ("env", "--chdir"), ("sudo", "-D"), ("sudo", "--chdir")}
 # Environment that points git at another repository (round-6 review): unresolved.
@@ -1272,9 +1298,40 @@ def _api_request(args: list[str]) -> tuple[str, str | None, dict[str, str], bool
     return method, endpoint, fields, has_input
 
 
-def _api_effect(endpoint: str, fields: dict[str, str]) -> tuple[str, str | None] | None:
+# GraphQL mutations by what they release (docs.github.com/en/graphql/reference/mutations).
+# Review writes first: they are the owner's, whatever else the request does.
+_GRAPHQL_MUTATIONS = (
+    ("review", ("addPullRequestReview", "submitPullRequestReview", "dismissPullRequestReview",
+                "updatePullRequestReview", "deletePullRequestReview", "addPullRequestReviewThread",
+                "addPullRequestReviewComment")),
+    ("merge", ("mergePullRequest", "enablePullRequestAutoMerge", "enqueuePullRequest")),
+    ("push-main", ("mergeBranch", "createCommitOnBranch")),
+    ("deploy-tag", ("createRef", "updateRef", "updateRefs", "deleteRef", "createRelease", "updateRelease")),
+)
+
+
+def _graphql_effect(fields: dict[str, str], has_input: bool) -> tuple[str, str | None] | None:
+    query = fields.get("query")
+    if has_input or query is None or query.startswith("@"):
+        return "unreadable", None
+    if not re.search(r"\bmutation\b", query):
+        return None
+    called = set(re.findall(r"\b([A-Za-z_]\w*)\s*\(", query))
+    for cls, names in _GRAPHQL_MUTATIONS:
+        if called & set(names):
+            return cls, None
+    return None
+
+
+def _api_effect(endpoint: str, fields: dict[str, str], has_input: bool = False) -> tuple[str, str | None] | None:
     """(class, the PR / workflow / run it names) of a WRITE to `endpoint`, or None."""
     path = endpoint.split("?", 1)[0].rstrip("/")
+    if path.lstrip("/") == "graphql":
+        return _graphql_effect(fields, has_input)
+    if re.search(r"(?:^|/)pulls/[^/]+/reviews(?:/.*)?$", path):
+        return "review", None
+    if re.search(r"(?:^|/)releases(?:/[^/]+)?$", path):
+        return "deploy-tag", None  # a release creates or moves its tag
     if m := re.search(r"(?:^|/)pulls/([^/]+)/merge$", path):
         return "merge", m.group(1)
     if re.search(r"(?:^|/)merges$", path):
@@ -1659,10 +1716,17 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
             if method == "GET":
                 continue
             judged()
-            found = _api_effect(endpoint or "", fields) if endpoint else ("deploy-tag", None)
+            found = _api_effect(endpoint or "", fields, _has_input) if endpoint else ("deploy-tag", None)
             if not found:
                 continue
             cls, named = found
+            if cls == "unreadable":
+                problem("a GraphQL request whose query the gate cannot read (a file or standard input), so "
+                        "a merge or a ref write in it cannot be ruled out; give the query inline")
+                continue
+            if cls == "review":
+                add("review")
+                continue
             if view.problem:
                 problem(view.problem)
             if compound_call:
@@ -1685,6 +1749,13 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
                 details["tags_literal"] = False
             continue
 
+        if view.kind == "gh-pr-review":
+            # Every `gh pr review` writes one (approve, request changes, comment).
+            _ref, slug, _auto = _merge_target(view.args)
+            if guarded(gh_dirs, slug, view.slug, repo_candidate, slug_of_selector(_ref)):
+                judged()
+                add("review")
+            continue
         if view.kind == "gh-pr-merge":
             ref, slug, auto = _merge_target(view.args)
             selector = ref
@@ -1808,12 +1879,10 @@ def _classify_push(args: list[str], repo_dir: str, remote: str | None, branch_of
     else:
         current_branch_needed = not refspecs and not (flags & {"--tags", "--follow-tags"})
         for ref in refspecs:
-            dst = ref.lstrip("+").split(":")[-1]
-            dst = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst
-            dst = "HEAD" if dst == "@" else dst  # git reads `@` alone as HEAD
-            if dst in _MAIN_BRANCHES:
+            kind, name = push_refs.destination(ref)  # git's own reading (push_refs.py)
+            if kind == "branch" and name in _MAIN_BRANCHES:
                 mine.add("push-main")
-            elif dst == "HEAD" or ("$" in dst and "deploy-tag" not in classes | mine):
+            elif kind == "head" or ("$" in ref and "deploy-tag" not in classes | mine):
                 current_branch_needed = True
         # A repository named only when the command runs may be on main.
         if current_branch_needed and any(_unresolved(d) or branch_of(d) in _MAIN_BRANCHES
@@ -2806,6 +2875,11 @@ def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
                 f"`$(...)`, globs, escapes or other redirections in a release command. Nothing was used.")
     if not classes:
         return None
+    if "review" in classes:
+        return ("Refused: this command writes a pull request review (approve, request changes, comment or "
+                "dismiss). A review is only the owner's: it is the approval the gate reads, so no approval "
+                "covers an agent writing one. Read reviews freely; ask the owner to review on GitHub. "
+                "Nothing was used.")
     what = ", ".join(sorted(classes))
     if payload.get("agent_id"):
         return (f"Blocked: this command performs a release action ({what}), and release actions "
