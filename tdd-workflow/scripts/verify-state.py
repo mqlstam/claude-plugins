@@ -14,6 +14,7 @@ unchanged; editing, adding or deleting any file does not.
     verify-state.py check --commit <rev>   # after committing, and before pushing
     verify-state.py adopt-squash           # right before merging main in
     verify-state.py integrate              # right after merging main in
+    verify-state.py verdict-id             # the verdict the evidence manifest names
     verify-state.py evidence               # VERIFY: the evidence manifest is complete
     verify-state.py review-marker          # the marker the PR body carries
     verify-state.py review-covers <PR>     # /ship: the PR head is the reviewed work,
@@ -27,6 +28,12 @@ A clean integration of main keeps the verdict, so it keeps the marker valid; a f
 that was reviewed again records a new verdict, so the PR's older evidence is named
 stale and must be refreshed (and watched) before landing; a commit nobody reviewed
 is refused as before.
+
+The manifest names the verdict it was recorded for (`verdictId`, the verdict's
+treeDigest); `evidence`, `review-marker` and `review-covers` refuse evidence of
+another verdict. A conflict resolved while landing is reviewed and recorded as a
+new verdict, so its recordings must be made again (or each flow named NOT RUN)
+before the PR can show it (review finding, 2026-10-22).
 
 `evidence` holds VERIFY's manifest to the contract the PR shows: an observable
 change names its user flows, and each has a recording or a NOT RUN reason; a change
@@ -585,6 +592,45 @@ def evidence_problems(root, manifest):
     return problems
 
 
+def current_verdict(root):
+    """The READY verdict that covers this checkout as it stands: the working tree, or
+    (clean) HEAD through an accepted integration or another checkout's verdict."""
+    own, _ = read_state(root / STATE_PATH)
+    if own is not None and tree_contents(root) == own["contents"]:
+        return own
+    if changed_paths(root) - {STATE_PATH}:
+        return None
+    return covering_verdict(root, "HEAD")
+
+
+STALE_EVIDENCE = ("the evidence belongs to an earlier verdict ({shown}); this work was reviewed as {current}. "
+                  "Run the runtime evidence for this verdict, or name each flow NOT RUN with its reason, and "
+                  "write the manifest again with this verdictId")
+
+
+def manifest_verdict_problem(root, digest):
+    """Why the manifest on disk is not this verdict's evidence, or None."""
+    try:
+        manifest = json.loads((root / MANIFEST_PATH).read_text())
+    except (OSError, ValueError):
+        return f"{MANIFEST_PATH} is missing or unreadable: VERIFY writes it at READY"
+    shown = manifest.get("verdictId") if isinstance(manifest, dict) else None
+    if not _text(shown):
+        return "the manifest names no `verdictId` (`verify-state.py verdict-id` prints it)"
+    if shown != digest:
+        return STALE_EVIDENCE.format(shown=shown[:12], current=digest[:12])
+    return None
+
+
+def verdict_id(root):
+    state = current_verdict(root)
+    if state is None:
+        print("the working tree is not covered by a READY verdict; record VERIFY's verdict first")
+        return 1
+    print(state["treeDigest"])
+    return 0
+
+
 def check_evidence(root):
     path = root / MANIFEST_PATH
     if not path.is_file():
@@ -596,6 +642,13 @@ def check_evidence(root):
         print(f"{MANIFEST_PATH} is unreadable ({error})")
         return 1
     problems = evidence_problems(root, manifest)
+    current = current_verdict(root)
+    if current is None:
+        problems.append("no READY verdict covers the working tree: the evidence belongs to no verdict")
+    else:
+        stale = manifest_verdict_problem(root, current["treeDigest"])
+        if stale:
+            problems.append(stale)
     if problems:
         print(f"the evidence manifest is incomplete; fix {MANIFEST_PATH}:")
         for problem in problems:
@@ -624,6 +677,10 @@ def review_marker(root):
     if state is None:
         print("HEAD is not covered by a READY verdict; commit exactly the reviewed work "
               "(`verify-state.py check --commit HEAD` names what differs)")
+        return 1
+    stale = manifest_verdict_problem(root, state["treeDigest"])
+    if stale:
+        print(f"no marker: {stale}")
         return 1
     print(MARKER.format(state["treeDigest"]))
     return 0
@@ -662,6 +719,10 @@ def review_covers(root, pr):
             for label, path in differences(commit_contents(root, head), own["contents"]):
                 print(f"  {label}: {path}")
         return 1
+    stale = manifest_verdict_problem(root, covering["treeDigest"])
+    if stale:
+        print(f"PR {pr}: {stale}; then refresh the PR's evidence and let the owner watch it before landing")
+        return 1
     if not shown:
         print(f"PR {pr} carries no verify-verdict marker, so its evidence cannot be tied to the review; "
               "refresh the evidence (open for review)")
@@ -691,6 +752,8 @@ def main(argv):
             return adopt_squash(root)
         if args == ["evidence"]:
             return check_evidence(root)
+        if args == ["verdict-id"]:
+            return verdict_id(root)
         if args == ["review-marker"]:
             return review_marker(root)
         if len(args) == 2 and args[0] == "review-covers":
@@ -702,8 +765,8 @@ def main(argv):
         detail = (error.stderr or b"").decode(errors="replace").strip()
         print(f"refused: `{' '.join(error.cmd)}` failed: {detail}")
         return 1
-    print("usage: verify-state.py record | check [--commit <rev>] | adopt-squash | integrate | evidence | "
-          "review-marker | review-covers <PR>", file=sys.stderr)
+    print("usage: verify-state.py record | check [--commit <rev>] | adopt-squash | integrate | verdict-id | "
+          "evidence | review-marker | review-covers <PR>", file=sys.stderr)
     return 2
 
 

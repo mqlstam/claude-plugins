@@ -80,7 +80,13 @@ class EvidenceManifestTest(Repo):
     """Owner, 2026-10-22: a user-observable change carries a recording of every user
     flow, or says per flow why not; a change with nothing to observe says so."""
 
+    def setUp(self):
+        super().setUp()
+        self.ok("record")
+        self.verdict = self.ok("verdict-id").strip()
+
     def write(self, manifest, files=()):
+        manifest.setdefault("verdictId", self.verdict)
         directory = self.root / ".claude" / "verify-evidence" / "r1"
         directory.mkdir(parents=True, exist_ok=True)
         for name in files:
@@ -89,8 +95,8 @@ class EvidenceManifestTest(Repo):
 
     def observable(self, **override):
         manifest = {
-            "verdict": "READY", "recordedAt": "2026-10-22T10:00:00Z", "slice": "docs/slices/1-x.md",
-            "observable": True, "outOfScope": "",
+            "verdict": "READY", "verdictId": self.verdict, "recordedAt": "2026-10-22T10:00:00Z",
+            "slice": "docs/slices/1-x.md", "observable": True, "outOfScope": "",
             "flows": ["Upload a file and open it"],
             "items": [
                 {"path": ".claude/verify-evidence/r1/01-list.png", "kind": "screenshot",
@@ -151,6 +157,31 @@ class EvidenceManifestTest(Repo):
                     "observable": False, "outOfScope": "", "flows": [], "items": [], "notRun": []})
         self.refused("evidence", says=("outOfScope",))
 
+    def test_the_verdict_id_is_the_recorded_digest(self):
+        state = json.loads((self.root / ".claude" / ".verify-state.json").read_text())
+        self.assertEqual(self.verdict, state["treeDigest"])
+
+    def test_a_manifest_without_its_verdict_is_refused(self):
+        manifest = self.observable()
+        del manifest["verdictId"]
+        (self.root / ".claude" / "verify-evidence").mkdir(parents=True, exist_ok=True)
+        (self.root / MANIFEST).write_text(json.dumps(manifest))
+        self.refused("evidence", says=("verdictId",))
+
+    def test_evidence_of_an_earlier_verdict_is_refused_after_a_new_review(self):
+        # Review finding (2026-10-22): a conflict resolved while landing gets a new
+        # verdict; the recordings still show the code before it. Mutation: without the
+        # verdict check the old manifest passes.
+        self.write(self.observable(), files=("01-list.png", "02-upload.mp4"))
+        self.ok("evidence")
+        (self.root / "app.py").write_text("print('resolved a conflict')\n")
+        self.ok("record")
+        self.refused("evidence", says=("belongs to an earlier verdict", "NOT RUN"))
+
+    def test_no_verdict_id_without_a_verdict_covering_the_tree(self):
+        (self.root / "app.py").write_text("print('unreviewed')\n")
+        self.refused("verdict-id", says=("not covered",))
+
     def test_a_missing_manifest_is_refused(self):
         self.refused("evidence", says=("manifest.json is missing",))
 
@@ -159,6 +190,7 @@ class EvidenceManifestTest(Repo):
         text = (Path(__file__).resolve().parents[2] / "skills" / "feature" / "phases" / "04-verify.md").read_text()
         block = text[text.index("### The evidence manifest"):].split("```json\n", 1)[1].split("```", 1)[0]
         manifest = json.loads(block)
+        manifest["verdictId"] = self.verdict
         for item in manifest["items"]:
             self.assertRegex(item["path"], r"^\.claude/verify-evidence/r\d+/")
             (self.root / item["path"]).parent.mkdir(parents=True, exist_ok=True)
@@ -173,7 +205,16 @@ class ReviewCoversTest(Repo):
     def setUp(self):
         super().setUp()
         self.assertEqual(self.run_script("record").returncode, 0)
+        self.write_evidence()
         self.head = self.commit()
+
+    def write_evidence(self):
+        """A complete manifest for the verdict now recorded (nothing to observe)."""
+        (self.root / ".claude" / "verify-evidence").mkdir(parents=True, exist_ok=True)
+        (self.root / MANIFEST).write_text(json.dumps({
+            "verdict": "READY", "verdictId": self.ok("verdict-id").strip(), "recordedAt": "2026-10-22T10:00:00Z",
+            "slice": "x", "observable": False, "outOfScope": "tooling only", "flows": [], "items": [],
+            "notRun": []}))
 
     def marker(self):
         out = self.ok("review-marker").strip()
@@ -209,11 +250,31 @@ class ReviewCoversTest(Repo):
         self.answer(head, f"## Evidence\n{marker}\n")
         self.refused("review-covers", "42", says=("changed after the review", "app.py"))
 
+    def test_a_marker_needs_this_verdicts_evidence(self):
+        (self.root / "app.py").write_text("print('fixed')\n")
+        self.ok("record")
+        self.commit("fix: the review finding")
+        self.refused("review-marker", says=("belongs to an earlier verdict",))
+        self.write_evidence()
+        self.marker()
+
+    def test_landing_refuses_when_the_evidence_on_disk_is_an_earlier_verdicts(self):
+        # The PR's marker can name the new verdict while the files are still the old
+        # ones (a re-record after a conflict). Mutation: review-covers ignoring the
+        # manifest passes this.
+        (self.root / "app.py").write_text("print('resolved')\n")
+        self.ok("record")
+        head = self.commit("fix: conflict resolution")
+        state = json.loads((self.root / ".claude" / ".verify-state.json").read_text())
+        self.answer(head, f"<!-- verify-verdict: {state['treeDigest']} -->")
+        self.refused("review-covers", "42", says=("belongs to an earlier verdict",))
+
     def test_a_second_verify_makes_the_evidence_stale(self):
         # A fix was reviewed again: the PR still shows the first VERIFY's evidence.
         marker = self.marker()
         (self.root / "app.py").write_text("print('fixed')\n")
         self.assertEqual(self.run_script("record").returncode, 0)
+        self.write_evidence()
         head = self.commit("fix: the review finding")
         self.answer(head, f"## Evidence\n{marker}\n")
         self.refused("review-covers", "42", says=("refresh the evidence",))

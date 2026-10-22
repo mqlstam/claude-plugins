@@ -201,11 +201,12 @@ Do not stop the stack yourself. Another session may share this worktree and be u
 it; the project's session-end and idle hooks soft-stop it once no live session needs
 it, which a stop from inside one session cannot know.
 
-- **READY** -> write the evidence manifest (below), for every change; then
-  `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py evidence` must exit 0 (a flow
-  without its recording or reason is a VERIFY that is not done); then run
-  `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`. It
-  writes `.claude/.verify-state.json` with the verdict bound to the exact contents
+- **READY** -> run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`
+  first, then `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py verdict-id`;
+  write the evidence manifest (below), for every change, naming that `verdictId`;
+  then `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py evidence` must exit 0
+  (a flow without its recording or reason, or evidence of an earlier verdict, is a
+  VERIFY that is not done). `record` `.claude/.verify-state.json` with the verdict bound to the exact contents
   reviewed: every tracked and untracked, non-ignored file, by mode and blob id.
   `/ship`, `/quickship` and `/merge` run `verify-state.py check` before merging main
   and committing; committing the reviewed work keeps the verdict, and any other
@@ -238,6 +239,7 @@ round that ran it:
 ```json
 {
   "verdict": "READY",
+  "verdictId": "<what verify-state.py verdict-id prints>",
   "recordedAt": "<ISO 8601 time>",
   "slice": "<slice doc path or task>",
   "observable": true,
@@ -269,4 +271,7 @@ and every one must exist. `kind` is `screenshot` or `recording`; a recording nam
 goes under `notRun` with its reason, so the pull request shows it beside the evidence;
 NOT RUN is never a pass there either. A change with no observable effect writes
 `"observable": false`, its reason in `outOfScope`, and no flows or items.
-`verify-state.py evidence` checks all of this.
+`verdictId` binds the evidence to the verdict: a new verdict (a fix reviewed again,
+a conflict resolved while landing) needs its own recordings, or each flow named
+NOT RUN with its reason, before the PR can show it. `verify-state.py evidence`,
+`review-marker` and `review-covers` check all of this.

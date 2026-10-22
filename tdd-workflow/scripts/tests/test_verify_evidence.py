@@ -65,11 +65,11 @@ class EvidenceTest(unittest.TestCase):
         self.assertIn("NOT RUN", report)
         self.assertIn("never VERIFIED", text)
 
-    def test_verify_empties_the_directory_hands_the_round_on_and_writes_the_manifest_before_record(self):
+    def test_verify_empties_the_directory_hands_the_round_on_and_writes_the_manifest_after_record(self):
         text = words(read(VERIFY))
         self.assertIn("**Empty the evidence directory** in every VERIFY", text)
         self.assertIn("evidence directory (`.claude/verify-evidence/r1/`)", text)
-        self.assertLess(text.index("write the evidence manifest"), text.index("verify-state.py record`"))
+        self.assertLess(text.index("verify-state.py record`"), text.index("write the evidence manifest"))
         self.assertIn("NOT RUN is never a pass", text)
 
     def test_manifest_example_is_valid_json_with_the_documented_fields(self):
@@ -80,8 +80,9 @@ class EvidenceTest(unittest.TestCase):
         manifest = json.loads(block)
         # Owner, 2026-10-22: every change writes one; an observable change names its
         # user flows, and each recording the flow it shows.
-        self.assertEqual(set(manifest), {"verdict", "recordedAt", "slice", "observable", "outOfScope", "flows",
-                                         "items", "notRun"})
+        # `verdictId`: the verdict the evidence belongs to (`verify-state.py verdict-id`).
+        self.assertEqual(set(manifest), {"verdict", "verdictId", "recordedAt", "slice", "observable", "outOfScope",
+                                         "flows", "items", "notRun"})
         kinds = {item["kind"] for item in manifest["items"]}
         self.assertEqual(kinds, {"screenshot", "recording"})
         for item in manifest["items"]:
@@ -104,7 +105,10 @@ class EvidenceTest(unittest.TestCase):
         self.assertNotIn("when runtime verification was in scope", verify)
         self.assertIn("Hard to provoke, or covered by tests, is not out of scope.", verify)
         self.assertIn("write the evidence manifest (below), for every change", verify)
-        self.assertLess(verify.index("verify-state.py evidence`"), verify.index("verify-state.py record`"))
+        # The verdict is recorded first, so the manifest can name it; then it is checked.
+        ready = verify[verify.index("## After the verdict"):]
+        self.assertLess(ready.index("verify-state.py record`"), ready.index("verify-state.py verdict-id`"))
+        self.assertLess(ready.index("verify-state.py verdict-id`"), ready.index("verify-state.py evidence`"))
 
 
 if __name__ == "__main__":

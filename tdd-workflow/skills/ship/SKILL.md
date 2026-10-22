@@ -195,7 +195,9 @@ merge is exactly git's clean merge of the reviewed work and main, and the verdic
 covers it without another review. Exit 1 names the paths a conflict resolution or
 a hook changed: give them and the contracts they touch a targeted correctness
 review, and once it is READY run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`.
-A new verdict means new evidence: the PR then needs VERIFY's evidence for it.
+A new verdict means new evidence: record the runtime evidence for the resolved
+paths again (or name each flow NOT RUN with its reason) with the new `verdictId`, open
+for review again, and STOP for the owner; `review-covers` refuses the old manifest.
 Substantive new feature work re-arms VERIFY fully.
 
 **Local validation.** Read the checkout's own `package.json` after the merge.
