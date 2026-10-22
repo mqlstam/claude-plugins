@@ -14,7 +14,8 @@ reload, a row that is never written.
 
 The parent gives you the slice or task description, the diff base, the stack's URL,
 the profile that is running, the services that profile leaves out, how it made
-each changed service run the current code, and this round's evidence directory.
+each changed service run the current code, this round's evidence directory, and the
+user flows to record.
 Read the acceptance criteria and the diff. Then confirm the stack answers, in one call. If it does not, report
 `BLOCKED: stack not reachable at <url>` and stop. The parent owns the stack's
 lifecycle, so do not start, restart or rebuild it yourself.
@@ -54,11 +55,14 @@ committed.
   effect shows. With `preview_snapshot` pass `save: true` and copy the returned
   `screenshotPath` into the evidence directory; the harness's own copy lives outside
   the checkout and is not kept.
-- **One short recording per user flow,** when the criterion is a flow rather than a
-  state: start it right before the first step (`preview_recording_start`), stop it
+- **One short recording per user flow, always.** The owner approves the change by
+  watching these on the pull request before it merges, so every flow the parent named
+  (and any other path a user takes to see the change) gets one, or a NOT RUN with its
+  reason. Start it right before the first step (`preview_recording_start`), stop it
   right after the effect shows (`preview_recording_stop`), and copy the returned file
   into the evidence directory. Keep it to the flow itself, a few seconds to about a
-  minute; a long recording is not watched and may be too large to attach.
+  minute; a long recording is not watched and may be too large to attach. A flow
+  that is hard to provoke is tried, not skipped: say what you tried.
 - Name files so they sort in the order of the criteria (`01-<criterion>.png`,
   `02-<flow>.mp4`).
 
@@ -101,6 +105,9 @@ Stack: <url>, profile <name>, without <services>
 Per criterion:
   - <criterion>: VERIFIED (<evidence>) | DEFECT (N) | NOT RUN (<missing service or reason>)
 
+Per user flow:
+  - <flow>: RECORDED (<path>) | NOT RUN (<reason>)
+
 Defects:
   1. [blocker|major|minor] <what goes wrong>
      Reproduce: <steps>
@@ -111,7 +118,7 @@ Outside the slice:
   - <defect, same shape>
 
 Evidence files (one line each, in criterion order):
-  - <path in the checkout> | <criterion> | <one-sentence caption: what it shows>
+  - <path in the checkout> | <criterion> | <one-sentence caption: what it shows> [| <flow>, for a recording]
 
 VERDICT: READY | NEEDS_FIX | BLOCKED | NOT_RUN
 ```

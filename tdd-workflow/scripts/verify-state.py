@@ -14,6 +14,25 @@ unchanged; editing, adding or deleting any file does not.
     verify-state.py check --commit <rev>   # after committing, and before pushing
     verify-state.py adopt-squash           # right before merging main in
     verify-state.py integrate              # right after merging main in
+    verify-state.py evidence               # VERIFY: the evidence manifest is complete
+    verify-state.py review-marker          # the marker the PR body carries
+    verify-state.py review-covers <PR>     # /ship: the PR head is the reviewed work,
+                                           # and the PR shows that verdict's evidence
+
+The owner approves a change by watching its evidence on the pull request before
+it merges (owner, 2026-10-22). So the PR body carries a marker naming the verdict
+its evidence belongs to (the verdict's `treeDigest`), and /ship lands a PR only
+when its head is covered by a verdict AND that verdict is the one the marker names.
+A clean integration of main keeps the verdict, so it keeps the marker valid; a fix
+that was reviewed again records a new verdict, so the PR's older evidence is named
+stale and must be refreshed (and watched) before landing; a commit nobody reviewed
+is refused as before.
+
+`evidence` holds VERIFY's manifest to the contract the PR shows: an observable
+change names its user flows, and each has a recording or a NOT RUN reason; a change
+with nothing to observe states why. Measured over the 40 PRs merged before
+2026-10-22: 10 of 15 user-visible PRs carried no recording, and READY with an
+empty evidence list passed.
 
 The working-tree check alone is not enough: an index staged before the review
 can commit other contents than the files on disk. So the release skills check
@@ -46,6 +65,7 @@ otherwise, naming every path that differs.
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -484,6 +504,177 @@ def adopt_squash(root):
     return 0
 
 
+# --- the evidence the owner watches on the PR ------------------------------------
+
+EVIDENCE_DIR = ".claude/verify-evidence/"
+MANIFEST_PATH = EVIDENCE_DIR + "manifest.json"
+EVIDENCE_KINDS = ("screenshot", "recording")
+MARKER = "<!-- verify-verdict: {} -->"
+MARKER_PATTERN = r"<!-- verify-verdict: ([0-9a-f]{64}) -->"
+
+
+def _text(value):
+    return isinstance(value, str) and value.strip() != ""
+
+
+def evidence_problems(root, manifest):
+    """Every way the manifest falls short of what the PR must show, in words."""
+    problems = []
+    if not isinstance(manifest, dict):
+        return ["the manifest is not a JSON object"]
+    if manifest.get("verdict") != "READY":
+        problems.append(f"its verdict is {manifest.get('verdict')!r}, not READY")
+    observable = manifest.get("observable")
+    items, flows, not_run = (manifest.get(key) for key in ("items", "flows", "notRun"))
+    if not isinstance(observable, bool):
+        return problems + ["`observable` must be true or false: does the change alter anything a user "
+                           "or caller can observe?"]
+    if not all(isinstance(v, list) for v in (items, flows, not_run)):
+        return problems + ["`items`, `flows` and `notRun` must be lists"]
+    if not observable:
+        if not _text(manifest.get("outOfScope")):
+            problems.append("a change with nothing to observe states why in `outOfScope`")
+        if items or flows:
+            problems.append("a change with nothing to observe carries no items or flows; "
+                            "if it shows something, it is observable")
+        return problems
+    if not flows or not all(_text(f) for f in flows):
+        problems.append("an observable change names no user flow: list each flow a user goes "
+                        "through in `flows`, as the slice words it")
+    ignored = set()
+    paths = [item.get("path") for item in items if isinstance(item, dict) and _text(item.get("path"))]
+    if paths:
+        out = subprocess.run(["git", "check-ignore", "--no-index", "--stdin", "-z"], cwd=root,
+                             input="\0".join(paths).encode(), capture_output=True)
+        ignored = set(out.stdout.decode().split("\0"))
+    recorded = set()
+    for item in items:
+        if not isinstance(item, dict):
+            problems.append("an item is not an object")
+            continue
+        path = item.get("path")
+        if not _text(path):
+            problems.append("an item has no path")
+            continue
+        if item.get("kind") not in EVIDENCE_KINDS:
+            problems.append(f"{path}: kind must be one of {', '.join(EVIDENCE_KINDS)}")
+        if not _text(item.get("criterion")) or not _text(item.get("caption")):
+            problems.append(f"{path}: every item names its criterion and a caption")
+        normal = os.path.normpath(path)
+        if os.path.isabs(path) or not (normal + "/").startswith(EVIDENCE_DIR) or normal == MANIFEST_PATH:
+            problems.append(f"{path}: outside {EVIDENCE_DIR}")
+            continue
+        full = root / normal
+        if not full.is_file() or full.stat().st_size == 0:
+            problems.append(f"{path}: does not exist or is empty")
+        elif path not in ignored:
+            problems.append(f"{path}: not ignored by git, so the commit would carry it")
+        if item.get("kind") == "recording":
+            if item.get("flow") not in flows:
+                problems.append(f"{path}: a recording names the flow it shows (`flow`, one of `flows`)")
+            recorded.add(item.get("flow"))
+    reasons = {}
+    for entry in not_run:
+        if not isinstance(entry, dict) or not _text(entry.get("criterion")) or not _text(entry.get("reason")):
+            problems.append("every NOT RUN entry names its criterion and its reason")
+            continue
+        reasons[entry["criterion"]] = entry["reason"]
+    for flow in flows:
+        if _text(flow) and flow not in recorded and flow not in reasons:
+            problems.append(f"user flow {flow!r} has no recording and no NOT RUN reason")
+    return problems
+
+
+def check_evidence(root):
+    path = root / MANIFEST_PATH
+    if not path.is_file():
+        print(f"{MANIFEST_PATH} is missing: VERIFY writes it at READY, for every change")
+        return 1
+    try:
+        manifest = json.loads(path.read_text())
+    except (OSError, ValueError) as error:
+        print(f"{MANIFEST_PATH} is unreadable ({error})")
+        return 1
+    problems = evidence_problems(root, manifest)
+    if problems:
+        print(f"the evidence manifest is incomplete; fix {MANIFEST_PATH}:")
+        for problem in problems:
+            print(f"  {problem}")
+        return 1
+    if not manifest["observable"]:
+        print(f"evidence: out of scope: {manifest['outOfScope']}")
+        return 0
+    flows = manifest["flows"]
+    print(f"evidence: {len(manifest['items'])} items for {len(flows)} user flow{'s' if len(flows) != 1 else ''}"
+          + "".join(f"\n  NOT RUN: {e['criterion']} ({e['reason']})" for e in manifest["notRun"]))
+    return 0
+
+
+def covering_verdict(root, rev):
+    """The READY verdict of any checkout of this repository that covers `rev`, or None."""
+    for path in worktree_states(root):
+        state, _reason = read_state(path)
+        if state is not None and covers_commit(root, state, rev):
+            return state
+    return None
+
+
+def review_marker(root):
+    state = covering_verdict(root, "HEAD")
+    if state is None:
+        print("HEAD is not covered by a READY verdict; commit exactly the reviewed work "
+              "(`verify-state.py check --commit HEAD` names what differs)")
+        return 1
+    print(MARKER.format(state["treeDigest"]))
+    return 0
+
+
+def review_covers(root, pr):
+    """The PR's head is the reviewed work, and the evidence it shows is that verdict's."""
+    try:
+        out = subprocess.run(["gh", "pr", "view", pr, "--json", "state,headRefOid,body,url"], cwd=root,
+                             capture_output=True, text=True, timeout=GH_CALL_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f"`gh pr view {pr}` did not answer ({error.__class__.__name__})")
+        return 1
+    if out.returncode != 0:
+        print(f"`gh pr view {pr}` failed: {(out.stderr.strip().splitlines() or ['no output'])[-1]}")
+        return 1
+    try:
+        data = json.loads(out.stdout)
+        head, state, body = str(data["headRefOid"]), str(data["state"]), str(data.get("body") or "")
+    except (ValueError, KeyError, TypeError):
+        print(f"`gh pr view {pr}` printed no PR")
+        return 1
+    if state != "OPEN":
+        print(f"PR {pr} is {state}, not OPEN")
+        return 1
+    if not is_commit(root, head):
+        print(f"PR {pr}'s head {head[:12]} is not in this clone; `git fetch origin` its branch first")
+        return 1
+    shown = re.findall(MARKER_PATTERN, body)
+    covering = covering_verdict(root, head)
+    if covering is None:
+        own, _ = read_state(root / STATE_PATH)
+        print(f"PR {pr}'s head {head[:12]} changed after the review: no READY verdict covers it. "
+              "VERIFY the change, refresh the PR's evidence and let the owner watch it again")
+        if own is not None:
+            for label, path in differences(commit_contents(root, head), own["contents"]):
+                print(f"  {label}: {path}")
+        return 1
+    if not shown:
+        print(f"PR {pr} carries no verify-verdict marker, so its evidence cannot be tied to the review; "
+              "refresh the evidence (open for review)")
+        return 1
+    if shown[-1] != covering["treeDigest"]:
+        print(f"PR {pr}'s evidence belongs to an earlier VERIFY ({shown[-1][:12]}); its head {head[:12]} "
+              f"was reviewed again as {covering['treeDigest'][:12]}: refresh the evidence on the PR and "
+              "let the owner watch it before landing")
+        return 1
+    print(f"PR {pr}: head {head[:12]} is the reviewed work, and the PR shows that verdict's evidence")
+    return 0
+
+
 def main(argv):
     args = argv[1:]
     try:
@@ -498,6 +689,12 @@ def main(argv):
             return integrate(root)
         if args == ["adopt-squash"]:
             return adopt_squash(root)
+        if args == ["evidence"]:
+            return check_evidence(root)
+        if args == ["review-marker"]:
+            return review_marker(root)
+        if len(args) == 2 and args[0] == "review-covers":
+            return review_covers(root, args[1])
     except Refusal as refusal:
         print(f"refused: {refusal}")
         return 1
@@ -505,7 +702,8 @@ def main(argv):
         detail = (error.stderr or b"").decode(errors="replace").strip()
         print(f"refused: `{' '.join(error.cmd)}` failed: {detail}")
         return 1
-    print("usage: verify-state.py record | check [--commit <rev>] | adopt-squash | integrate", file=sys.stderr)
+    print("usage: verify-state.py record | check [--commit <rev>] | adopt-squash | integrate | evidence | "
+          "review-marker | review-covers <PR>", file=sys.stderr)
     return 2
 
 

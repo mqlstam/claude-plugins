@@ -78,13 +78,33 @@ class EvidenceTest(unittest.TestCase):
         self.assertIn(".claude/verify-evidence/manifest.json", section)
         block = re.search(r"```json\n(.*?)```", section, re.S).group(1)
         manifest = json.loads(block)
-        self.assertEqual(set(manifest), {"verdict", "recordedAt", "slice", "items", "notRun"})
+        # Owner, 2026-10-22: every change writes one; an observable change names its
+        # user flows, and each recording the flow it shows.
+        self.assertEqual(set(manifest), {"verdict", "recordedAt", "slice", "observable", "outOfScope", "flows",
+                                         "items", "notRun"})
         kinds = {item["kind"] for item in manifest["items"]}
         self.assertEqual(kinds, {"screenshot", "recording"})
         for item in manifest["items"]:
-            self.assertEqual(set(item), {"path", "kind", "criterion", "caption"})
+            extra = {"flow"} if item["kind"] == "recording" else set()
+            self.assertEqual(set(item), {"path", "kind", "criterion", "caption"} | extra)
             self.assertTrue(item["path"].startswith(".claude/verify-evidence/r"))
         self.assertEqual(set(manifest["notRun"][0]), {"criterion", "reason"})
+        recorded = {item.get("flow") for item in manifest["items"]} | {e["criterion"] for e in manifest["notRun"]}
+        self.assertLessEqual(set(manifest["flows"]), recorded, "each flow has a recording or a reason")
+
+    def test_recording_every_user_flow_is_required_for_an_observable_change(self):
+        # The causes of 10 of 15 user-visible PRs without a recording (2026-10-22):
+        # recordings only "when the criterion is a flow", READY with runtime "skipped",
+        # and a manifest only when runtime verification was in scope.
+        verifier = words(read(VERIFIER))
+        self.assertNotIn("when the criterion is a flow rather than a state", verifier)
+        self.assertIn("One short recording per user flow, always.", verifier)
+        verify = words(read(VERIFY))
+        self.assertNotIn("or was skipped or NOT RUN", verify)
+        self.assertNotIn("when runtime verification was in scope", verify)
+        self.assertIn("Hard to provoke, or covered by tests, is not out of scope.", verify)
+        self.assertIn("write the evidence manifest (below), for every change", verify)
+        self.assertLess(verify.index("verify-state.py evidence`"), verify.index("verify-state.py record`"))
 
 
 if __name__ == "__main__":

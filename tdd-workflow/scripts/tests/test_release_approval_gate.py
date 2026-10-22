@@ -44,7 +44,8 @@ class FakeWorld(gate.World):
 
     def __init__(self, prs=None, remote_tags=None, local_tags=None, on_main=(), run_info=None,
                  runs_since=None, run_started=None, now=ATTEMPT + 3600):
-        super().__init__(run=self._no_subprocess, wall=lambda: now)
+        # No agent App on this machine unless a test says so (test_review_approval.py).
+        super().__init__(run=self._no_subprocess, wall=lambda: now, load_app_config=lambda: None)
         self.runs_since = dict(runs_since or {})  # workflow -> True | None; default False (no run)
         self.started = dict(run_started or {})  # run id -> epoch | None; default long before
         self.prs = dict(prs or {})  # ref -> ("MERGED", sha) | None (GitHub cannot say)
@@ -1557,11 +1558,15 @@ class ClassifyEffectDetailsTest(unittest.TestCase):
 
     def test_the_pr_a_merge_names(self):
         _, d = self.details("gh pr merge 1385 --squash --match-head-commit abc -R EndoxiaBV/Endoxia")
-        self.assertEqual(d["merges"], [{"ref": "1385", "dir": "/repo", "slug": "EndoxiaBV/Endoxia", "auto": False}])
+        # `head`: the commit --match-head-commit lets GitHub merge, which a review must approve.
+        self.assertEqual(d["merges"], [{"ref": "1385", "dir": "/repo", "slug": "EndoxiaBV/Endoxia", "auto": False,
+                                        "head": "abc"}])
         _, d = self.details("gh pr merge --auto --squash")
-        self.assertEqual((d["merges"][0]["ref"], d["merges"][0]["auto"]), (None, True))
+        self.assertEqual((d["merges"][0]["ref"], d["merges"][0]["auto"], d["merges"][0]["head"]), (None, True, None))
+        _, d = self.details("gh pr merge 3 --match-head-commit=def")
+        self.assertEqual(d["merges"][0]["head"], "def")
         _, d = self.details("gh api -X PUT repos/o/r/pulls/7/merge")
-        self.assertEqual((d["merges"][0]["ref"], d["merges"][0]["slug"]), ("7", "o/r"))
+        self.assertEqual((d["merges"][0]["ref"], d["merges"][0]["slug"], d["merges"][0]["head"]), ("7", "o/r", None))
 
     def test_sole_reads_redirects_as_part_of_the_command(self):
         self.assertTrue(self.details("git push origin main > /tmp/o 2>&1", branch="main")[1]["sole"])

@@ -114,7 +114,7 @@ Reach for it before reaching for another grep-shaped gate.
 | --------------------------- | -------------------------------------------------------------- |
 | `/feature <name> [--layers]`| New feature; single-agent build by default                     |
 | `/refactor <name> [--layers]`| Refactor; ANALYZE fans out, the build does not                |
-| `/ship`                     | Commit, merge main, check the change, push, PR, squash-merge                |
+| `/ship`                     | Land the PR the owner reviewed: that exact head, then its staging deploy (VERIFY opens the PR with its evidence) |
 | `/quickship`                | Same local checks, push directly to main |
 | `/merge`                    | Squash-merge an existing PR directly |
 | `/deploy`                   | Release main via a `deploy-*` tag — the only thing that deploys (Endoxia: to STAGING; production is `/promote`) |
@@ -124,9 +124,10 @@ Reach for it before reaching for another grep-shaped gate.
 ## Local checks and release gates
 
 Read the checkout's own `package.json`. Where it declares `ship:check`, VERIFY
-runs that fast local lane beside the review, and again after any fix. /ship checks VERIFY on
-its original HEAD, commits, merges origin/main in and runs `pnpm ship:check` on
-the integrated tree. Integration alone does not re-arm VERIFY. The model may add
+runs that fast local lane beside the review, and again after any fix. At READY,
+VERIFY opens the PR for review: it commits, merges origin/main in, runs
+`pnpm ship:check` on the integrated tree, pushes and attaches the evidence. /ship
+then lands exactly the PR head that evidence was recorded for. Integration alone does not re-arm VERIFY. The model may add
 coverage with a reason, never remove the automatic floor.
 
 Each worktree runs independently. Push, open the PR and squash-merge directly,

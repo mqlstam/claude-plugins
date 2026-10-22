@@ -10,7 +10,11 @@ argument-hint: "[PR number or branch name]"
 Every command is one plain call with literal values. Never pipe the merge.
 Use this merge approval throughout; do not invoke another release skill. It is
 spent by the PR becoming MERGED, never by a failed attempt, and covers the merge
-only: no deploy.
+only: no deploy. Where this machine has the agent App
+(`${CLAUDE_PLUGIN_ROOT}/docs/APP-SETUP.md`), the owner's approving review on GitHub
+of a PR the App opened is this approval too, read by the release gate when the merge
+runs: APPROVED on exactly the head `--match-head-commit` names. A push of an update
+in step 1 makes a new head, which that review no longer covers: report it and STOP.
 Never rewrite history or force-push.
 Read main's newest `endoxia/main-health` status with
 `gh api repos/:owner/:repo/commits/main/statuses --jq '[.[] | select(.context == "endoxia/main-health")][0] // null'`.

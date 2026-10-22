@@ -7,7 +7,7 @@
     {
       "name": "claude-tdd-workflow",
       "source": "./tdd-workflow",
-      "description": "TDD workflow with parallel verification, fast local checks, direct squash merges and separate releases"
+      "description": "TDD workflow with parallel verification, PRs opened for the owner's review with their evidence, fast local checks, direct squash merges and separate releases"
     },
     {
       "name": "drawio",

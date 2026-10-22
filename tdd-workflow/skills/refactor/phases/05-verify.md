@@ -11,5 +11,9 @@ Two things to add to the review context:
   caller never migrated, a renamed file that still holds the old body. The reviewer's
   brief checks for this when it is told what was replaced.
 - **State the behaviour that must not change.** A refactor that changes nothing
-  observable skips runtime verification; one that moves a request path, a persisted
-  format or a rendered surface does not.
+  observable is out of scope for runtime verification, and its manifest says why
+  (`observable: false`); one that moves a request path, a persisted format or a
+  rendered surface is observable, and records each user flow it moves, so the owner
+  sees on the PR that it still works.
+
+At READY it opens the PR for review the same way (`skills/ship/open-for-review.md`).

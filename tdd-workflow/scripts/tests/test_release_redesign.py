@@ -169,7 +169,7 @@ class DirectReleaseTest(unittest.TestCase):
 class ReleaseRedesignContractTest(unittest.TestCase):
     def test_version_and_no_retired_mechanisms(self):
         manifest = json.loads(read(os.path.join(ROOT, ".claude-plugin", "plugin.json")))
-        self.assertEqual(manifest["version"], "1.8.3")
+        self.assertEqual(manifest["version"], "1.9.0")
         for relative in ("skills/ship/SKILL.md", "skills/ship/generic.md", "skills/merge/SKILL.md", "skills/quickship/SKILL.md",
                          "skills/feature/phases/04-verify.md", "skills/refactor/phases/05-verify.md",
                          "skills/tdd-methodology/SKILL.md", "scripts/instance-manager.py",
@@ -202,7 +202,7 @@ class ReleaseRedesignContractTest(unittest.TestCase):
                       "the re-merge when main moved adopts too")
 
     def test_the_check_after_the_merge_reuses_unchanged_passes_and_is_never_skipped(self):
-        step = skill("ship").split("5. **Local validation.**", 1)[1].split("6. **Push", 1)[0]
+        step = skill("ship").split("**Local validation.**", 1)[1].split("Before every push", 1)[0]
         self.assertIn("byte-identical", step)
         self.assertIn("Never skip it", step)
         self.assertIn("never replace it with commands picked by hand", step)

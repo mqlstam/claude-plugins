@@ -258,6 +258,7 @@ from typing import NamedTuple
 # which does not put the script's directory on sys.path. Name it explicitly.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shell_text import inert_regions, mask_inert, simple_commands  # noqa: E402
+import agent_app  # noqa: E402
 
 ACTION_CLASSES = ("merge", "push-main", "deploy-tag", "dispatch")
 
@@ -894,6 +895,16 @@ def _rerun_of_one_run(args: list[str]) -> tuple[str, str | None] | None:
     return (run_id, slug) if run_id and failed else None
 
 
+def _match_head(args: list[str]) -> str | None:
+    """The commit `gh pr merge --match-head-commit <SHA>` lets GitHub merge, or None."""
+    for i, tok in enumerate(args):
+        if tok == "--match-head-commit" and i + 1 < len(args):
+            return args[i + 1]
+        if tok.startswith("--match-head-commit="):
+            return tok.split("=", 1)[1]
+    return None
+
+
 def _merge_target(args: list[str]) -> tuple[str | None, str | None, bool]:
     """(PR ref, -R slug, --auto) of `gh pr merge <args>`. No ref means the current
     branch's PR, which the replay cannot name."""
@@ -963,6 +974,9 @@ _COMPUTED = re.compile(r"[$`*?\[]")
 _SHELL_KEYWORDS = {"if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done",
                    "case", "esac", "select", "function", "{", "}", "!", "[[", "]]", "coproc"}
 # Programs that run the command after them ONCE, with the options each takes a value for.
+# The plugin's App wrapper (agent-github-token.py): see View.via_app.
+APP_WRAPPER = "agent-github-token.py"
+
 _ONCE_WRAPPERS = {
     "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
     "command": set(), "builtin": set(), "nohup": set(),
@@ -1010,6 +1024,11 @@ class View(NamedTuple):
     # and `env NAME=v`, ("unset", NAME, None) for `env -u NAME`, ("clear", None, None)
     # for `env -i` / `env -` (round 11).
     env: tuple[tuple[str, str | None, str | None], ...] = ()
+    # Run through the plugin's agent-github-token.py (`python3 .../agent-github-token.py
+    # run <git|gh> ...`), which pushes a branch or writes PR text as the agent's GitHub
+    # App and refuses anything else. What it runs is judged as itself; a release
+    # through it is refused (owner, 2026-10-22).
+    via_app: bool = False
 
 
 def _shell_run(words: list[str], j: int) -> tuple[str, str | None] | None:
@@ -1159,6 +1178,13 @@ def command_view(words: list[str]) -> View:
     if i >= len(words):
         return none
     head, rest = words[i], words[i + 1:]
+    if (os.path.basename(head) in ("python3", "python") and len(rest) >= 3
+            and os.path.basename(rest[0]) == APP_WRAPPER and rest[1] == "run" and not _COMPUTED.search(rest[0])):
+        view = _tool_view(os.path.basename(rest[2]), rest[3:])
+        if view:
+            via = None if view.kind == "git-push" else (
+                f"a release run through {APP_WRAPPER}, which runs only review work (a branch push, PR text)")
+            return view._replace(via_app=True, problem=view.problem or via, **own)
     if _COMPUTED.search(head):
         problem = f"a command word computed when it runs (`{head}`)"
         # `$G push ...` may be git, `$(which gh) pr merge` may be gh: either is refused.
@@ -1591,7 +1617,10 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
                 problem("no explicit refspec (a bare `git push` or `git push origin` pushes what git's "
                         "configuration says; name the branch: `git push origin <branch>`)")
             repo_dir = repo_dirs[0] if len(repo_dirs) == 1 else tuple(repo_dirs)
+            before = set(classes)
             _classify_push(view.args, repo_dir, dest, branch_of, classes, details, add, effect, cmd)
+            if view.via_app and classes - before:
+                problem(f"a release push run through {APP_WRAPPER}, which pushes only a feature branch")
             continue
 
         # The repository gh acts on: its -R or a URL, else GH_REPO when gh sees it
@@ -1643,7 +1672,8 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
             # The repository a `repos/:owner/:repo/...` path reaches is gh's -R / GH_REPO.
             where, repo = record(explicit or view.slug or visible_repo)
             if cls == "merge":
-                details["merges"].append({"ref": named, "dir": where, "slug": repo, "auto": False})
+                details["merges"].append({"ref": named, "dir": where, "slug": repo, "auto": False,
+                                          "head": None})
             elif cls == "dispatch":
                 details["dispatches"].append({"workflow": named, "run": None, "slug": repo, "dir": where})
             elif cls == "rerun":
@@ -1686,7 +1716,8 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
         if view.kind == "gh-pr-merge":
             add("merge")
             if details is not None:
-                details["merges"].append({"ref": ref, "dir": where, "slug": repo, "auto": auto})
+                details["merges"].append({"ref": ref, "dir": where, "slug": repo, "auto": auto,
+                                          "head": _match_head(view.args)})
         elif view.kind == "gh-workflow-run":
             add("dispatch")
             if details is not None:
@@ -1884,8 +1915,14 @@ class World:
     environment (`_lookup_env`)."""
 
     def __init__(self, run=subprocess.run, clock=time.monotonic, budget_s: float = LOOKUP_BUDGET_S,
-                 wall=time.time):
+                 wall=time.time, app_config=None, load_app_config=agent_app.load_config):
         self._run = run
+        # The agent App's config, read only when a review could approve something:
+        # None when this machine has not opted in, or when its config is unusable
+        # (`app_config_problem` says why; a broken config approves nothing).
+        self._app_config = app_config
+        self._load_app_config = load_app_config if app_config is None else None
+        self.app_config_problem: str | None = None
         self._clock = clock
         self._wall = wall
         self._deadline = clock() + budget_s
@@ -1934,6 +1971,55 @@ class World:
         if not isinstance(data, dict) or not data.get("state"):
             return None
         return PrState(str(data["state"]).upper(), (data.get("mergeCommit") or {}).get("oid"), data.get("url"))
+
+    @property
+    def app_config(self) -> "agent_app.AppConfig | None":
+        if self._load_app_config is not None:
+            loader, self._load_app_config = self._load_app_config, None
+            try:
+                self._app_config = loader()
+            except agent_app.ConfigError as error:
+                self.app_config_problem = str(error)
+        return self._app_config
+
+    @app_config.setter
+    def app_config(self, value) -> None:
+        self._app_config, self._load_app_config = value, None
+
+    def current_branch(self, directory: str) -> str | None:
+        return _current_branch(directory)
+
+    def review(self, ref: str, repo: str | None) -> "agent_app.Review | None":
+        """What the owner's review of PR `ref` in `repo` says now (agent_app.judge_review);
+        None when no App covers `repo` or GitHub cannot say."""
+        config, path = self.app_config, _repo_path(repo)
+        if config is None or path is None or not config.covers(path) or not re.fullmatch(r"\d+", ref or ""):
+            return None
+        pr = self._json_lines(["gh", "api", f"repos/{path}/pulls/{ref}", "--jq",
+                               "{user: {login: .user.login}, head: {sha: .head.sha}, state: .state}"])
+        reviews = self._json_lines(["gh", "api", "--paginate", f"repos/{path}/pulls/{ref}/reviews", "--jq",
+                                    ".[] | {user: {login: .user.login}, state: .state, commit_id: .commit_id}"])
+        if not pr or reviews is None:
+            return None
+        return agent_app.judge_review(pr[0], reviews, config)
+
+    def branch_pr(self, branch: str | None, repo: str | None) -> str | None:
+        """The one open PR whose head is `branch` of `repo`, None when there is not exactly one."""
+        path = _repo_path(repo)
+        if path is None or not branch or not re.fullmatch(r"[\w./-]+", branch):
+            return None
+        rows = self._json_lines(["gh", "api", f"repos/{path}/pulls?head={path.split('/')[0]}:{branch}&state=open",
+                                 "--jq", ".[].number"])
+        return str(rows[0]) if rows and len(rows) == 1 else None
+
+    def _json_lines(self, argv: list[str]) -> list | None:
+        out = self._call(argv)
+        if out is None or out[0] != 0:
+            return None
+        try:
+            return [json.loads(line) for line in out[1].splitlines() if line.strip()]
+        except ValueError:
+            return None
 
     def remote_tag(self, tag: str, repo_dir: str, remote: str | None = "origin") -> str | None:
         """The commit the tag names where it was pushed (`remote`: a remote of the
@@ -2194,6 +2280,10 @@ def _same_commit(produced: Produced, sha: str) -> bool:
     return len(produced.sha) >= 7 and sha.startswith(produced.sha)
 
 
+# The name a merge approved by the owner's review on GitHub carries (agent_app.py).
+REVIEW_APPROVAL = "github-review"
+
+
 class Ledger:
     def __init__(self, actions_of=lambda _name: (), follow_on_of=lambda _name: (),
                  world: World | None = None):
@@ -2330,7 +2420,16 @@ class Ledger:
                   for r, repo in zip(refs, repos)]
         merged = [(s, r, repo) for s, r, repo in zip(states, refs, repos) if s and s.state == "MERGED"]
         for s, r, repo in merged:
-            self.charge("merge", identity=s.url or s.merge_sha or str(r["ref"]), repo=repo,
+            identity = s.url or s.merge_sha or str(r["ref"])
+            if (repo and ("merge", repo, identity) not in self._effects
+                    and not any(a.left["merge"] > 0 for a in self.auths)):
+                # No typed approval paid for it: the owner's review on GitHub did, when
+                # it approves the head that was merged. That approval then covers this
+                # one merge and the one staging tag on its merge commit, as /ship's does.
+                review = self.world.review(str(r["ref"]), repo)
+                if review is not None and review.approved:
+                    self.auths.append(Authorization(REVIEW_APPROVAL, ("merge",), self._follow_on_of("ship")))
+            self.charge("merge", identity=identity, repo=repo,
                         produced=Produced(s.merge_sha, _first_dir(r["dir"]), True, repo) if s.merge_sha else None)
         if merged:
             return
@@ -2599,6 +2698,59 @@ def _line_to_type(missing: list[str], ledger: Ledger, resolver: SkillResolver) -
     return "/approve " + " ".join(names) if names else "/approve <skill>"
 
 
+def _review_approves_merge(details: dict, ledger: Ledger, world: World) -> str | None:
+    """None when the owner's review on GitHub approves this merge; otherwise why not,
+    or "" when no review could (no App on this machine, for this repository)."""
+    merges = details.get("merges") or []
+    if len(merges) != 1:
+        return ""
+    m = merges[0]
+    repo = ledger.repo_of(m["dir"], m["slug"])
+    config = world.app_config
+    if config is None or not config.covers(_repo_path(repo)):
+        return (f"The agent App config is unusable: {world.app_config_problem}."
+                if world.app_config_problem else "")
+    if not _literal(m["ref"]) or not re.fullmatch(r"\d+", m["ref"] or "") or m["auto"]:
+        return ("A GitHub review approves only `gh pr merge <PR> --squash --match-head-commit <SHA>` "
+                "with the PR's number.")
+    head = m.get("head")
+    if not head or not re.fullmatch(r"[0-9a-f]{40}", head):
+        return ("A GitHub review approves a merge only with `--match-head-commit <SHA>`, the full "
+                "head it approved, so GitHub refuses the merge if anything was pushed since.")
+    review = world.review(m["ref"], repo)
+    if review is None:
+        return f"The review of PR {m['ref']} could not be read from GitHub."
+    if not review.approved:
+        return f"GitHub review: {review.reason}."
+    if review.head != head:
+        return (f"GitHub review: {config.owner_login} approved {review.head[:12]}, and this merge names "
+                f"{head[:12]}.")
+    return None
+
+
+def _review_approves_skill(name: str, payload: dict, resolver: SkillResolver, world: World) -> str | None:
+    """None when the owner's review on GitHub approves the PR of this session's branch
+    for a skill whose only release is that merge (ship, merge); otherwise why not."""
+    if set(resolver.actions(name)) != {"merge"}:
+        return ""
+    config = world.app_config
+    if config is None:
+        return f"The agent App config is unusable: {world.app_config_problem}." if world.app_config_problem else ""
+    cwd = payload.get("cwd") or os.getcwd()
+    repo = world.repo_slug(cwd)
+    if not config.covers(_repo_path(repo)):
+        return (f"The agent App config is unusable: {world.app_config_problem}."
+                if world.app_config_problem else "")
+    branch = world.current_branch(cwd)
+    pr = world.branch_pr(branch, repo)
+    if pr is None:
+        return f"GitHub review: the branch {branch or '?'} has no single open PR to approve."
+    review = world.review(pr, repo)
+    if review is None:
+        return f"The review of PR {pr} could not be read from GitHub."
+    return None if review.approved else f"GitHub review of PR {pr}: {review.reason}."
+
+
 def decide_skill(payload: dict, resolver: SkillResolver, read=build_ledger, sleep=time.sleep,
                  history_scope: RepoScope | None = None, world: World | None = None) -> str | None:
     """Returns a refusal reason, or None to allow."""
@@ -2618,11 +2770,15 @@ def decide_skill(payload: dict, resolver: SkillResolver, read=build_ledger, slee
             return None
         if attempt == 0:
             sleep(TRANSCRIPT_LAG_RETRY_S)
+    review_note = _review_approves_skill(name, payload, resolver, world)
+    if review_note is None:
+        return None
     return (f"`{b}` is a release skill and needs the user's approval: none of `{b}` is open in this "
             f"session (an approval stays open until the release it covers has taken effect). Ask the "
             f"user to send `/approve {b}` as a message of its own (nothing else in it), or to run "
             f"`/{b}` themselves. Do not carry out its steps by hand: the release "
-            f"commands themselves are gated too. Say that you were blocked.")
+            f"commands themselves are gated too. Say that you were blocked."
+            + (f" {review_note}" if review_note else ""))
 
 
 def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
@@ -2671,6 +2827,7 @@ def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
                 f"literal name (`git push origin deploy-<TS>`, never `--tags`), or one dispatch. "
                 f"Nothing was used.")
     missing: list[str] = []
+    review_note: str | None = None
     history_scope = history_scope or release_scope(payload.get("cwd") or os.getcwd())
     world = world or World()
     ledger: Ledger | None = None
@@ -2693,12 +2850,18 @@ def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
                 missing.append("deploy-tag")
         if any(not ledger.rerun_covered(*r) for r in details.get("reruns", [])):
             missing.append("rerun")
+        if "merge" in missing:
+            review_note = _review_approves_merge(details, ledger, world)
+            if review_note is None:
+                missing.remove("merge")
         if not missing:
             return None
         if attempt == 0:
             sleep(TRANSCRIPT_LAG_RETRY_S)
     assert ledger is not None
     notes = ""
+    if "merge" in missing and review_note:
+        notes += f" {review_note}"
     if "deploy-tag" in missing and ledger.armed("deploy-tag"):
         commits = ", ".join(sorted({p.sha[:12] for a in ledger.armed("deploy-tag") for p in a.produced}))
         notes += (f" This session's {', '.join(sorted({a.skill for a in ledger.armed('deploy-tag')}))} "

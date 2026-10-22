@@ -1,7 +1,7 @@
 {
   "name": "claude-tdd-workflow",
-  "version": "1.8.3",
-  "description": "TDD workflow with an independent review and runtime verification, fast local change checks, direct squash merges, private worktree stacks and separate staging and production releases",
+  "version": "1.9.0",
+  "description": "TDD workflow with an independent review and runtime verification, pull requests opened for the owner's review with their recorded evidence, fast local change checks, direct squash merges of the reviewed head, private worktree stacks and separate staging and production releases",
   "author": {
     "name": "Miquel Stam"
   }
