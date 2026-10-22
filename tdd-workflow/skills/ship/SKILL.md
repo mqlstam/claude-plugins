@@ -30,9 +30,9 @@ Stay on this branch; use a feature branch for /ship. Main uses /quickship.
 **The approval** is one of: the typed `/ship`, `/approve ship` as a message of its
 own, or (where this machine has the agent App, `${CLAUDE_PLUGIN_ROOT}/docs/APP-SETUP.md`)
 the owner's approving review on GitHub of the PR the App opened. The release gate
-reads that review when the merge runs: the owner's newest review is APPROVED on
-exactly the PR's head. A later commit, a dismissal, a "changes requested" or a
-comment after it means no approval. Whichever it is, the approval is spent by the
+reads that review when the merge runs: the owner's newest deciding review is
+APPROVED on exactly the PR's head. As on GitHub, a comment after it keeps it; a later
+commit, a dismissal or a "changes requested" means no approval. Whichever it is, the approval is spent by the
 merge taking effect, never by invoking this skill or by a step or a merge that
 failed: retry in this session without asking again. It covers ONE merge and then
 ONE staging deploy tag on exactly the merge commit it produced (step 7). A second
@@ -41,8 +41,10 @@ each need their own approval.
 
 **Woken by T3 on the PR** (the chat watched it in phase 1): read the owner's review,
 `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_app.py review <PR>`.
-- `APPROVED` → land: invoke this skill (the gate allows it on that review).
-- Changes requested, or comments → read them
+- `APPROVED` → land: invoke this skill (the gate allows it on that review). Read
+  any comments the owner added after approving too: when one asks for a change,
+  say so and ask before landing; praise ("mooi") needs nothing.
+- Changes requested, or comments with no approval on the head → read them
   (`gh pr view <PR> --comments`, and `gh api repos/:owner/:repo/pulls/<PR>/comments`
   for the line comments), fix in this chat, VERIFY the change as VERIFY step 4
   says, then open for review again (it updates the PR and its evidence) and report.
@@ -65,9 +67,10 @@ Do not merge on a wake alone: the gate decides from the review, and so do you.
      `<SHA>`: the owner has not seen this. Open for review now
      (`${CLAUDE_SKILL_DIR}/open-for-review.md`). A change with nothing to observe
      (its manifest says out of scope) then continues here. An observable one STOPS
-     after the report: the owner watches the evidence first, and their next word
-     in this chat, or their approving review, lands it under this same approval,
-     which is still unspent.
+     after the report: the owner watches the evidence first. Their explicit go in
+     this chat (`/ship` again, or plainly saying to land it), or their approving
+     review, lands it under this same approval, which is still unspent. A question
+     or a change request is not a go: work it, and report again.
    - **The head is the reviewed work, with that review's evidence:**
      `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py review-covers <PR>` must
      exit 0. Exit 1 says which: a commit came after the review (VERIFY it, as VERIFY

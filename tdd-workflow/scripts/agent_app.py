@@ -23,12 +23,11 @@ release only after a typed approval.
 
 A review approves a merge only when, read at that moment from GitHub: the PR was
 opened by `botLogin` (so the owner did not review their own work), and the owner's
-newest submitted review is APPROVED on exactly the PR's current head. Every newer
-review by the owner counts against it, a COMMENTED one included (GitHub keeps the
-approval then; this gate does not, because a comment after an approval is something
-the owner wants worked), and so does a dismissal (GitHub rewrites the review's state
-to DISMISSED) and any commit pushed after the approval (the review names the commit
-it approved).
+newest deciding review is APPROVED on exactly the PR's current head. GitHub's rule
+(owner, 2026-10-22): a COMMENTED review after the approval keeps it ("mooi" must not
+block). Only a later CHANGES_REQUESTED, a dismissal (GitHub rewrites the review's
+state to DISMISSED) or a commit pushed after the approval (the review names the
+commit it approved) voids it.
 
     python3 agent_app.py review <PR> [-R owner/repo]   # what the owner's review says
 """
@@ -99,6 +98,9 @@ def load_config(path: str | None = None) -> AppConfig | None:
                      str(data["ownerLogin"]), frozenset(repos))
 
 
+DECISIVE = ("APPROVED", "CHANGES_REQUESTED", "DISMISSED")
+
+
 class Review(NamedTuple):
     approved: bool
     head: str | None
@@ -115,10 +117,12 @@ def judge_review(pr: dict, reviews: list[dict], config: AppConfig) -> Review:
         return Review(False, head, f"the PR was opened by {author or 'an unknown account'}, not by the agent "
                                    f"App ({config.bot_login}), so a review on GitHub does not approve it; "
                                    f"type `/approve ship`")
+    # GitHub's rule: a COMMENTED review leaves an approval standing, a PENDING one is
+    # not submitted. The owner's newest APPROVED / CHANGES_REQUESTED / DISMISSED decides.
     own = [r for r in reviews if str((r.get("user") or {}).get("login") or "").lower()
-           == config.owner_login.lower() and str(r.get("state") or "").upper() != "PENDING"]
+           == config.owner_login.lower() and str(r.get("state") or "").upper() in DECISIVE]
     if not own:
-        return Review(False, head, f"{config.owner_login} has not reviewed the PR")
+        return Review(False, head, f"{config.owner_login} has not approved or requested changes on the PR")
     last = own[-1]
     state = str(last.get("state") or "").upper()
     if state != "APPROVED":

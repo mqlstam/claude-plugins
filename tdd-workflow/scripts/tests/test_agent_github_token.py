@@ -121,6 +121,20 @@ class InstallationTokenTest(Base):
         self.minted()
         self.assertEqual(len(self.requests), 2, "renewed inside the margin")
 
+    def test_two_writers_never_share_a_partial_file(self):
+        # Review finding: every process wrote `<cache>.partial`; a second os.replace of
+        # the same name raised FileNotFoundError. Mutation: a fixed partial name fails.
+        partials = []
+        real = tok.os.replace
+        tok.os.replace = lambda src, dst: (partials.append(src), real(src, dst))[1]
+        try:
+            self.minted()
+            self.cache.unlink()
+            self.minted()
+        finally:
+            tok.os.replace = real
+        self.assertEqual(len(set(partials)), 2)
+
     def test_a_cache_of_another_installation_is_not_reused(self):
         self.minted()
         self.config = self.config._replace(installation_id="999")
@@ -182,7 +196,8 @@ class RunTest(Base):
                      ("git", "push", "origin", "refs/tags/x"), ("git", "push", "--mirror", "origin"),
                      ("git", "push", "--delete", "origin", "t3/x"), ("git", "push", "origin", ":t3/x"),
                      ("git", "push", "origin", "+t3/x"), ("git", "push", "--force", "origin", "t3/x"),
-                     ("git", "push"), ("gh", "pr", "merge", "12"), ("gh", "api", "repos/o/r/pulls/1/merge"),
+                     ("git", "push"), ("git", "push", "origin", "@"), ("git", "push", "origin", "t3/x:@"),
+                     ("gh", "pr", "merge", "12"), ("gh", "api", "repos/o/r/pulls/1/merge"),
                      ("gh", "workflow", "run", "promote.yml"), ("gh", "pr", "create", "--attach", "./a.mp4"),
                      ("gh", "pr", "edit", "12", "--attach", "./a.mp4"), ("git", "-C", "/x", "push", "origin", "b"),
                      ("sh", "-c", "git push")):

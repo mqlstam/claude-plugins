@@ -896,13 +896,16 @@ def _rerun_of_one_run(args: list[str]) -> tuple[str, str | None] | None:
 
 
 def _match_head(args: list[str]) -> str | None:
-    """The commit `gh pr merge --match-head-commit <SHA>` lets GitHub merge, or None."""
+    """The commit `gh pr merge --match-head-commit <SHA>` lets GitHub merge, or None.
+    A repeated flag is None: gh keeps its last value, so no one value can be read as
+    the head the review approved (review finding, 2026-10-22)."""
+    found = []
     for i, tok in enumerate(args):
-        if tok == "--match-head-commit" and i + 1 < len(args):
-            return args[i + 1]
-        if tok.startswith("--match-head-commit="):
-            return tok.split("=", 1)[1]
-    return None
+        if tok == "--match-head-commit":
+            found.append(args[i + 1] if i + 1 < len(args) else None)
+        elif tok.startswith("--match-head-commit="):
+            found.append(tok.split("=", 1)[1])
+    return found[0] if len(found) == 1 else None
 
 
 def _merge_target(args: list[str]) -> tuple[str | None, str | None, bool]:
@@ -1807,6 +1810,7 @@ def _classify_push(args: list[str], repo_dir: str, remote: str | None, branch_of
         for ref in refspecs:
             dst = ref.lstrip("+").split(":")[-1]
             dst = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst
+            dst = "HEAD" if dst == "@" else dst  # git reads `@` alone as HEAD
             if dst in _MAIN_BRANCHES:
                 mine.add("push-main")
             elif dst == "HEAD" or ("$" in dst and "deploy-tag" not in classes | mine):

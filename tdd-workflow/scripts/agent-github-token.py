@@ -61,7 +61,7 @@ HTTP_TIMEOUT_S = 30
 GIT_PUSH_OPTIONS = {"-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--no-verify",
                     "--force-with-lease", "--porcelain"}
 GH_PR_SUBCOMMANDS = {"create", "edit", "view", "comment", "ready"}
-PROTECTED = {"main", "master", "HEAD"}
+PROTECTED = {"main", "master", "HEAD", "@"}  # `@` alone is HEAD to git
 
 
 class TokenError(Exception):
@@ -108,7 +108,9 @@ def _read_cache(path: str, config: agent_app.AppConfig, now: float) -> str | Non
 
 def _write_cache(path: str, config: agent_app.AppConfig, token: str, expires_at: str) -> None:
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    partial = path + ".partial"
+    # One partial file per writer: chats renew in parallel, and a shared name let the
+    # second os.replace find nothing.
+    partial = f"{path}.{os.getpid()}.{time.monotonic_ns()}.partial"
     fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
         json.dump({"installationId": config.installation_id, "token": token, "expiresAt": expires_at}, fh)

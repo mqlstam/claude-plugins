@@ -82,7 +82,7 @@ class JudgeReviewTest(unittest.TestCase):
     def test_an_approval_by_someone_else_does_not(self):
         verdict = self.judge([review("APPROVED", login="someone-else")])
         self.assertFalse(verdict.approved)
-        self.assertIn("has not reviewed", verdict.reason)
+        self.assertIn("has not approved", verdict.reason)
 
     def test_a_pr_the_owner_opened_is_not_approved_by_a_review(self):
         verdict = self.judge([review("APPROVED")], author=OWNER)
@@ -99,8 +99,17 @@ class JudgeReviewTest(unittest.TestCase):
         self.assertFalse(verdict.approved)
         self.assertIn("CHANGES_REQUESTED", verdict.reason)
 
-    def test_a_comment_after_the_approval_is_worked_first(self):
-        self.assertFalse(self.judge([review("APPROVED"), review("COMMENTED")]).approved)
+    def test_a_comment_after_the_approval_keeps_it(self):
+        # Owner, 2026-10-22: GitHub's rule. A "mooi" after approving must not block;
+        # only a later CHANGES_REQUESTED, a dismissal or a new head voids it.
+        # Mutation: counting COMMENTED as the newest review refuses this.
+        self.assertTrue(self.judge([review("APPROVED"), review("COMMENTED")]).approved)
+        self.assertFalse(self.judge([review("APPROVED"), review("COMMENTED"), review("CHANGES_REQUESTED")]).approved)
+
+    def test_a_comment_alone_approves_nothing(self):
+        verdict = self.judge([review("COMMENTED")])
+        self.assertFalse(verdict.approved)
+        self.assertIn("has not approved or requested changes", verdict.reason)
 
     def test_an_approval_after_changes_requested_approves_and_pending_is_ignored(self):
         self.assertTrue(self.judge([review("CHANGES_REQUESTED", commit=OLD), review("APPROVED"),
@@ -156,11 +165,11 @@ class ReviewApprovesTheMergeTest(unittest.TestCase):
     def test_each_rejected_review_refuses_the_merge_and_says_why(self):
         for reviews, author, why in (
                 ([review("APPROVED", commit=OLD)], BOT, "a commit came after the approval"),
-                ([review("APPROVED", login="someone-else")], BOT, "has not reviewed"),
+                ([review("APPROVED", login="someone-else")], BOT, "has not approved"),
                 ([review("APPROVED")], OWNER, "not by the agent App"),
                 ([review("DISMISSED")], BOT, "DISMISSED"),
                 ([review("APPROVED"), review("CHANGES_REQUESTED")], BOT, "CHANGES_REQUESTED"),
-                ([], BOT, "has not reviewed")):
+                ([], BOT, "has not approved")):
             reason = bash_decision(Transcript().prose("go"), MERGE, world=ReviewWorld(reviews=reviews, author=author))
             self.assertIn("merge", reason, why)
             self.assertIn(why, reason, why)
@@ -170,6 +179,14 @@ class ReviewApprovesTheMergeTest(unittest.TestCase):
         world = approved_world()
         for cmd in ("gh pr merge 12 --squash", f"gh pr merge 12 --squash --match-head-commit {OLD}",
                     f"gh pr merge 13 --squash --match-head-commit {HEAD}"):
+            self.assertIsNotNone(bash_decision(Transcript().prose("go"), cmd, world=world), cmd)
+
+    def test_a_repeated_head_flag_is_never_approved(self):
+        # Review finding (2026-10-22): gh keeps the LAST value of a repeated flag, the
+        # gate read the first. Mutation: reading the first value allows this merge.
+        world = approved_world()
+        for cmd in (f"{MERGE} --match-head-commit {OLD}", f"gh pr merge 12 --match-head-commit={HEAD} "
+                                                         f"--match-head-commit {OLD}"):
             self.assertIsNotNone(bash_decision(Transcript().prose("go"), cmd, world=world), cmd)
 
     def test_no_app_config_means_typed_approvals_only(self):
@@ -219,6 +236,14 @@ class ReviewApprovesTheMergeTest(unittest.TestCase):
         t.bash("git push origin deploy-1")
         world = approved_world(prs={"12": ("MERGED", M)}, remote_tags={"deploy-1": M}, local_tags={"deploy-2": M})
         self.assertIn("deploy-tag", bash_decision(t, "git push origin deploy-2", world=world))
+
+
+class AtIsHeadTest(unittest.TestCase):
+    def test_a_push_of_at_from_main_is_a_push_to_main(self):
+        # Review finding: git reads `@` as HEAD. Mutation: without the alias it is no release.
+        for cmd in ("git push origin @", "git push origin @:@"):
+            self.assertEqual(gate.classify(cmd, "/repo", branch_of=lambda _d: "main"), {"push-main"}, cmd)
+        self.assertEqual(gate.classify("git push origin @", "/repo", branch_of=lambda _d: "feature"), set())
 
 
 class ReviewApprovesTheShipSkillTest(unittest.TestCase):

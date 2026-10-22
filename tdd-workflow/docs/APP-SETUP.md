@@ -136,8 +136,8 @@ token expires; it never prints the key or the token. Then reload the plugin
 - **The approval.** When `/ship` merges, the release gate reads
   `GET /repos/{o}/{r}/pulls/{n}` and `/pulls/{n}/reviews`: the PR's author must be
   `botLogin`, and `ownerLogin`'s newest submitted review must be `APPROVED` with
-  `commit_id` equal to the head the merge names (`--match-head-commit`). A
-  dismissal, a "changes requested", a comment after the approval, or a newer
-  commit means no approval. It covers that one merge and the one staging tag on its
+  `commit_id` equal to the head the merge names (`--match-head-commit`). As on
+  GitHub, a comment after the approval keeps it; a dismissal, a later "changes
+  requested" or a newer commit means no approval. It covers that one merge and the one staging tag on its
   merge commit, and is spent by the merge taking effect. Deploy, promote, release
   and hotfix are never approved by a review.
