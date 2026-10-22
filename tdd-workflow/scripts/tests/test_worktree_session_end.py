@@ -18,6 +18,7 @@ SCRIPT = os.path.join(os.path.dirname(HERE), "worktree-session-end.sh")
 class SessionEndTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
+        self.addCleanup(subprocess.run, ["rm", "-rf", self.tmp])
         self.main = os.path.join(self.tmp, "repo")
         self.wt = os.path.join(self.main, ".claude", "worktrees", "alpha")
         os.makedirs(os.path.join(self.main, "scripts"))
@@ -28,9 +29,6 @@ class SessionEndTest(unittest.TestCase):
                 fh.write(f'#!/usr/bin/env bash\nprintf "{name} %s\\n" "$*" >> "{self.record}"\n')
         self.home = os.path.join(self.tmp, "home")
         os.makedirs(self.home)
-
-    def tearDown(self):
-        subprocess.run(["rm", "-rf", self.tmp])
 
     def make_worktree_with_softstop(self):
         os.makedirs(os.path.join(self.wt, "scripts"))

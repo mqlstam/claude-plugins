@@ -20,7 +20,7 @@ You will be told:
 - [ ] **Find all usages** - In this module only
 - [ ] **Update imports** - Change to new location
 - [ ] **Update calls** - Use new API signatures
-- [ ] **Run module tests** - Verify still passing
+- [ ] **Run the changed call sites' test files** - Verify still passing
 - [ ] **Report changes** - Document what was migrated
 
 ## Process
@@ -63,11 +63,13 @@ const isValid = await validatePassword(email, password);
 const user = await authService.validateCredentials({ email, password });
 ```
 
-### 5. Run Module Tests
+### 5. Run the Test Files of the Call Sites You Changed
 
-```bash
-npm test -- --testPathPattern={module}
-```
+One run of those files, with the project's per-file test command (the project's
+own rule names it; Endoxia: `pnpm --filter <pkg> test <file>…`). Check that the
+output names them: from a workspace root, `vitest run <file>` can match no test
+and still exit 0. Never the package or repository suite: VERIFY's `ship:check`
+selects what your changes reach.
 
 ## Output Format
 
@@ -103,7 +105,7 @@ npm test -- --testPathPattern={module}
 ## Rules
 
 1. **ONLY touch your assigned module** - Don't edit other modules
-2. **Run tests after changes** - Verify nothing broke
+2. **Run the test files you changed** - Verify nothing broke
 3. **Document every change** - File, line, what changed
 4. **Report completion** - So other migrators can continue
 5. **Don't delete old code** - That's done after ALL modules migrate

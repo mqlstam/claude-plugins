@@ -55,11 +55,13 @@ independent — finish it yourself and say so.
 
 ## Mutation proof — required before VERIFY
 
-A refactor's tests must be able to fail:
+A refactor's tests must be able to fail. One mutant at a time, against the one test
+file that must turn red; never a loop or driver that runs a suite per mutant.
 
 1. Snapshot the file: `cp <file> /tmp/<file>.bak`
 2. Revert the line that carries the refactored behaviour
-3. Re-run the covering test — it MUST go red, naming the behaviour
+3. Re-run only the covering test file, with the project's per-file test command
+   (Endoxia: `pnpm --filter <pkg> test <file>`) — it MUST go red, naming the behaviour
 4. Restore from the snapshot. **Never** `git checkout -- <file>` — it reverts to HEAD
    and destroys every uncommitted change in that file
 5. Re-run — green

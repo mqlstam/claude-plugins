@@ -43,7 +43,13 @@ A second PR, a tag on any other commit, and production (`/promote`, `/release`,
    working-tree check in step 2 cannot see. On a refusal, review the paths it names.
 
 4. **Merge main in.** `git fetch origin main`, then
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py adopt-squash`, then
    `git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main`.
+   `adopt-squash` records this branch's own squash-merged PRs as merged, but only
+   when main's squash commit has exactly the PR head's tree, so it changes no file.
+   Without it the merge replays those PRs against this branch's later edits: PR
+   #1422 met 82 conflicted paths, 2 of them real. It prints what it adopted, or why
+   not; exit 1 names what to fix first (staged changes, no fetched main).
    Resolve conflicts in this branch, preserving both changes, and finish the merge
    commit with that same conventional subject.
    Keep commit hooks enabled. Do not rewrite history or force-push.
@@ -56,7 +62,10 @@ A second PR, a tag on any other commit, and production (`/promote`, `/release`,
    the merged tree.
 
 5. **Local validation.** Read the checkout's own `package.json` after the merge.
-   When it declares `ship:check`, run `pnpm ship:check` once. It selects affected
+   When it declares `ship:check`, run `pnpm ship:check` once. It already ran in
+   VERIFY; this second run reuses each pass whose input contents are byte-identical,
+   so a no-op or docs-only merge re-runs only what the merge reaches. Never skip it,
+   and never replace it with commands picked by hand. It selects affected
    lint/typecheck, scoped assertions and directly touched tests. The model may add
    `--add-tests`, `--add-package` or `--add-checks`, each with `--reason`, for a
    boundary the automatic selection cannot see; nothing narrows the floor.
@@ -130,8 +139,8 @@ A second PR, a tag on any other commit, and production (`/promote`, `/release`,
         `gh pr checks <PR>` in your report.
       - `3` `DIRTY` / `BEHIND` → `git fetch origin main`, then
         `git rev-list --count HEAD..origin/main`. `0` means the state was stale: run
-        the wait again. Otherwise main moved: use the merge command from step 4
-        with its conventional subject, resolve conflicts, run `verify-state.py integrate`
+        the wait again. Otherwise main moved: run `adopt-squash` and the merge command
+        from step 4 with its conventional subject, resolve conflicts, run `verify-state.py integrate`
         as in step 4, run local validation again, check the commit as in step 6, then
         push and wait again.
       - `4` `BLOCKED` → a required check or review is missing: `gh pr checks <PR>`,

@@ -12,10 +12,18 @@ You create React components following TDD principles.
 
 - [ ] **Read spec** - Check task file for UI requirements
 - [ ] **Write component test** - Test rendering and interactions
-- [ ] **Run test** - Verify it FAILS (RED)
+- [ ] **Run the test file** - Verify it FAILS (RED)
 - [ ] **Implement component** - Create the React component
-- [ ] **Run test** - Verify it PASSES (GREEN)
+- [ ] **Run the test file** - Verify it PASSES (GREEN)
 - [ ] **Update task file** - Mark task as done
+
+## Running tests
+
+Run only the test file you wrote, with the project's per-file test command (the
+project's own rule names it; Endoxia: `pnpm --filter <pkg> test <file>`), and check
+that the output names your file: from a workspace root, `vitest run <file>` can match
+no test and still exit 0. Never a package or repository suite: the parent's VERIFY
+runs `ship:check`, which selects what your file reaches.
 
 ## TDD Cycle
 

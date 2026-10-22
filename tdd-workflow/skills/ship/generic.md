@@ -1,7 +1,8 @@
 # Generic local validation
 
 Use only when this checkout has no `ship:check` script. Read its own `package.json`;
-never infer the commands from a remote branch. For shipping, integrate with
+never infer the commands from a remote branch. For shipping, integrate as /ship
+step 4 does, `verify-state.py adopt-squash` and then
 `git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main`,
 then validate the merged tree. The explicit subject satisfies conventional commit
 hooks; keep those hooks enabled.
@@ -38,7 +39,10 @@ of tool wall-clock was `sleep`/poll loops** around a validation that exceeds the
    `package-lock.json`. Print the ones it lacks: a command the repo does not have is
    skipped out loud, never silently.
 
-4. **Run them.**
+4. **Run them.** This validation is the merge gate of a project with no selecting
+   check: nothing here selects what a change reaches, so the whole suite runs. It is
+   not the build loop, which runs only the test files it touched (tdd-methodology,
+   "Running tests").
    - `pnpm lint`, `pnpm typecheck` and `pnpm format:check`: foreground, in one
      message. If a commit hook changed formatting, this checks the resulting tree.
    - `pnpm test`, then `pnpm build`: each with `run_in_background: true`, then wait

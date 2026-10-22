@@ -20,7 +20,7 @@ You will be told:
 - [ ] **Read the refactoring plan** - Understand target structure
 - [ ] **Create test file** - For the new structure
 - [ ] **Write tests for new API** - Test the desired interface
-- [ ] **Run tests** - Verify they FAIL (RED state)
+- [ ] **Run the test file** - Verify it FAILS (RED state)
 - [ ] **Report status** - Tests written and failing
 
 ## Process
@@ -62,9 +62,10 @@ describe('AuthService (refactored)', () => {
 
 ### 3. Run and Verify RED
 
-```bash
-npm test -- --testPathPattern={test-file}
-```
+Run only the test file you wrote, with the project's per-file test command (the
+project's own rule names it; Endoxia: `pnpm --filter <pkg> test <file>`). Check
+that the output names it: a command that matches no test exits 0, which is not
+RED. Never a package or repository suite.
 
 Tests MUST fail because implementation doesn't exist yet.
 

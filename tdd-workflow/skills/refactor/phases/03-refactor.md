@@ -7,7 +7,8 @@ Implement the new structure to make failing tests pass. Sequential because layer
 For each affected layer in dependency order (schema → service → route → hook → component):
 
 1. Implement the new structure
-2. Run layer tests — must PASS (GREEN)
+2. Run that layer's test files, with the project's per-file test command (Endoxia:
+   `pnpm --filter <pkg> test <file>…`) — they must PASS (GREEN)
 3. Old code still exists (not migrated yet)
 
 Work through layers sequentially. Each layer's tests must pass before moving to the next.

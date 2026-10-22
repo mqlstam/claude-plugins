@@ -1904,7 +1904,7 @@ class SessionScopeTest(unittest.TestCase):
 
     def config_and_repos(self):
         """A real scope config and two real git checkouts: one guarded, one not."""
-        root = tempfile.mkdtemp()
+        root = temp_dir(self)
         repos = {}
         for name, url in (("endoxia", "https://github.com/EndoxiaBV/Endoxia.git"),
                           ("eabos", "git@github.com:mqlstam/EABOS.git")):
@@ -2349,10 +2349,18 @@ class GitDirBeforeGhTest(unittest.TestCase):
                                              world=FakeWorld(prs={"42": ("MERGED", M10)})) or "allowed")
 
 
+def temp_dir(test):
+    """A temp dir removed when `test` ends, on every path: registered before anything
+    can fail inside it."""
+    holder = tempfile.TemporaryDirectory()
+    test.addCleanup(holder.cleanup)
+    return holder.name
+
+
 def real_repos(test):
     """A real scope config and real checkouts on branch `feature`: Endoxia (guarded),
     EABOS (not), and a path that does not exist."""
-    root = tempfile.mkdtemp()
+    root = temp_dir(test)
     repos = {}
     for name, key, url in (("endoxia", "E", "https://github.com/EndoxiaBV/Endoxia.git"),
                            ("eabos", "A", "git@github.com:mqlstam/EABOS.git")):
@@ -2508,7 +2516,7 @@ class LookupPathTest(unittest.TestCase):
     GET_URL = (lambda a: a[:2] == ["git", "-C"] and "get-url" in a, (0, "https://github.com/EndoxiaBV/Endoxia.git\n"))
 
     def test_the_prescribed_rerun_passes_with_a_host_qualified_gh_repo(self):
-        d = tempfile.mkdtemp()
+        d = temp_dir(self)
         run = ScriptedRun([
             self.GET_URL,
             self.ORIGIN,
@@ -2523,7 +2531,7 @@ class LookupPathTest(unittest.TestCase):
         self.assertIsNone(reason)
 
     def test_every_lookup_names_the_normalised_repository(self):
-        d = tempfile.mkdtemp()
+        d = temp_dir(self)
         for slug in ("github.com/EndoxiaBV/Endoxia", "https://github.com/EndoxiaBV/Endoxia", None):
             run = ScriptedRun([self.ORIGIN])
             world = gate.World(run=run)
@@ -2545,7 +2553,7 @@ class LookupPathTest(unittest.TestCase):
         run = ScriptedRun([self.ORIGIN])
         with inherited(GH_REPO="mqlstam/EABOS", GIT_DIR="/work/eabos/.git"):
             world = gate.World(run=run)
-            world.pr_state("42", gate.Ledger(world=world).repo_of(tempfile.mkdtemp()))
+            world.pr_state("42", gate.Ledger(world=world).repo_of(temp_dir(self)))
         for _argv, env in run.calls:
             self.assertIsNotNone(env)
             self.assertNotIn("GH_REPO", env)

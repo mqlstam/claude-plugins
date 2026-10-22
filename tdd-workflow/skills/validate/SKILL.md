@@ -2,7 +2,7 @@
 name: validate
 description: Validate vertical slice completeness - test coverage, connections, test execution
 disable-model-invocation: true
-allowed-tools: Bash(npm run test*), Bash(pnpm test*), Bash(pnpm run test*)
+allowed-tools: Bash(npm run test*), Bash(pnpm test*), Bash(pnpm run test*), Bash(pnpm ship:check*)
 ---
 
 # Validate Slice
@@ -18,7 +18,7 @@ allowed-tools: Bash(npm run test*), Bash(pnpm test*), Bash(pnpm run test*)
 Based on the changed files above:
 
 1. **Test coverage**: for each changed `*.ts`/`*.tsx` (excluding test files), does a `{name}.test.{ext}` or `{name}.spec.{ext}` exist?
-2. **Run tests**: `pnpm test` — all must pass.
+2. **Run tests**: where the project declares `ship:check`, `pnpm ship:check`: it runs the changed files' tests and what they reach. Otherwise the test files of the changed files, with the project's per-file test command. All must pass. A whole-suite run needs a stated reason.
 3. **Connections**: routes import services, hooks call endpoints, components use hooks.
 4. **Orphans**: unused imports, dead code, disconnected files.
 

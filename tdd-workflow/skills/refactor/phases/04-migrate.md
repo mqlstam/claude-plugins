@@ -22,7 +22,7 @@ Use `module-migrator` — one per affected module, launched in parallel if multi
 2. Each migrator:
    - Updates imports in their module
    - Updates call sites
-   - Runs module tests
+   - Runs the test files of the call sites it changed, per file
    - Reports completion
 
 3. After ALL modules migrated:
@@ -34,5 +34,7 @@ Use `module-migrator` — one per affected module, launched in parallel if multi
 ## Completion
 - All callers migrated
 - Old code deleted
-- All tests pass: `npm run test`
+- The test files of every migrated call site pass, run with the project's per-file
+  test command (Endoxia: `pnpm --filter <pkg> test <file>…`); VERIFY's `ship:check`
+  selects what they reach. A whole suite needs a stated reason.
 - Mark migrate task as completed, move to REVIEW phase

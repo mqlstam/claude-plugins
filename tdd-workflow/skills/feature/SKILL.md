@@ -77,12 +77,16 @@ it yourself.
 
 ## Mutation proof — required before VERIFY
 
-Before entering VERIFY, prove the tests can fail for the right reason:
+Before entering VERIFY, prove the tests can fail for the right reason. One mutant at
+a time, against the one test file that must turn red; never a loop or driver that
+runs a suite per mutant.
 
 1. Pick the line that implements the new behaviour.
 2. Revert it (do not commit).
-3. Re-run the test that claims to cover it — it **must** go red, and the failure must
-   name the behaviour.
+3. Re-run only the test file that claims to cover it, with the project's per-file
+   test command (Endoxia: `pnpm --filter <pkg> test <file>`) — it **must** go red,
+   and the failure must name the behaviour. A command that matches no test exits 0
+   and can never go red.
 4. Restore the line with `cp` from a snapshot you took first. **Never** restore with
    `git checkout -- <file>` — that reverts to HEAD and destroys every uncommitted
    change in the file, including work that was never part of the mutation.

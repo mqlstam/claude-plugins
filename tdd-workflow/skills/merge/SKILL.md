@@ -34,8 +34,12 @@ range and promote gates production. Report missing or pending health too.
    its validation evidence against `<SHA>`. If integration or validation is needed,
    use the PR branch's own checkout, with a clean tree and HEAD equal to `<SHA>`.
    If this session is elsewhere, STOP and name the required checkout; never switch
-   a shared branch. Then `git fetch origin main`
-   and `git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main`.
+   a shared branch. Then `git fetch origin main`, then
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py adopt-squash` (it records
+   the branch's own squash-merged PRs as merged when main's squash commit has the
+   PR head's exact tree, so the merge does not replay them against later edits;
+   exit 1 names what to fix first), then
+   `git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main`.
    Resolve conflicts and finish the merge with that same conventional subject;
    keep commit hooks enabled.
    Right after the merge commit, run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py integrate`. Exit 0: the

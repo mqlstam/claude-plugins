@@ -12,6 +12,7 @@ unchanged; editing, adding or deleting any file does not.
     verify-state.py record                 # VERIFY reached READY
     verify-state.py check                  # before staging: the working tree
     verify-state.py check --commit <rev>   # after committing, and before pushing
+    verify-state.py adopt-squash           # right before merging main in
     verify-state.py integrate              # right after merging main in
 
 The working-tree check alone is not enough: an index staged before the review
@@ -26,6 +27,18 @@ conflict resolved by hand, or anything a hook changed, is named for a targeted
 review instead. Accepted trees are kept with the verdict, so a release resumed
 later, or /merge run from another checkout of the same repository, still finds
 the commit covered.
+
+A branch that keeps going after one of its PRs was squash-merged shares no
+history with that squash commit, so merging main in replays the PR's own changes
+against the branch's later edits of the same lines. Endoxia PR #1422 met 82
+conflicted paths that way (its branch's #1397 was on main as a squash); 80 of
+them were the branch against itself. `adopt-squash` records such a squash commit
+as merged first (`git merge -s ours`), but only when the PR's head is in this
+branch's history and the squash commit has exactly that head's tree, so the
+adoption changes no file. The merge of main then starts from the squash commit:
+replayed on #1422, it leaves the 2 paths both sides really changed, and the other
+80 merge to exactly what was resolved by hand. `integrate` accepts the result as
+before, because the adoption keeps the covered tree.
 
 Each check exits 0 when a READY verdict covers exactly those contents, and 1
 otherwise, naming every path that differs.
@@ -42,6 +55,17 @@ STATE_PATH = ".claude/.verify-state.json"
 FORMAT = 5
 MAIN_REF = "refs/remotes/origin/main"
 GITLINK = "160000"
+
+# The longest the `gh` call of adopt-squash may take. `gh` reads measured 2026-10-20
+# from this machine took 0.4-0.9 s (release-run.py); 30 s is over 30x the slowest. At
+# the bound nothing is adopted and the merge of main goes on as before.
+GH_CALL_TIMEOUT_S = 30
+
+# How many of the branch's merged PRs adopt-squash reads. `gh pr list` returns the
+# newest first. The most merged PRs on one head branch of EndoxiaBV/Endoxia is 34
+# (`worktree-melodic-tinkering-orbit`, of 1,272 merged PRs read 2026-10-21); 100 is
+# about three times that. A full page is named in the output.
+MERGED_PR_LIMIT = 100
 
 
 class Refusal(Exception):
@@ -353,6 +377,113 @@ def integrate(root):
     return 0
 
 
+# --- adopting this branch's own squash-merged PRs ---------------------------------
+
+def is_ancestor(root, ancestor, rev):
+    return subprocess.run(["git", "merge-base", "--is-ancestor", ancestor, rev],
+                          cwd=root, capture_output=True).returncode == 0
+
+
+def is_commit(root, oid):
+    return subprocess.run(["git", "cat-file", "-e", f"{oid}^{{commit}}"], cwd=root,
+                          capture_output=True).returncode == 0
+
+
+def merged_prs(root, branch):
+    """This branch's merged PRs, latest merge first, as (number, head, squash), and
+    a note; or None and the reason they could not be read."""
+    command = ["gh", "pr", "list", "--head", branch, "--state", "merged", "--limit", str(MERGED_PR_LIMIT),
+               "--json", "number,headRefOid,mergeCommit,mergedAt"]
+    try:
+        out = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=GH_CALL_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return None, f"`gh pr list` did not answer ({error.__class__.__name__})"
+    if out.returncode != 0:
+        return None, f"`gh pr list` failed: {(out.stderr.strip().splitlines() or ['no output'])[-1]}"
+    try:
+        rows = json.loads(out.stdout)
+    except ValueError:
+        return None, "`gh pr list` printed no JSON"
+    prs = sorted(
+        ((str(row.get("mergedAt") or ""), int(row["number"]), str(row["headRefOid"]),
+          str((row.get("mergeCommit") or {}).get("oid") or ""))
+         for row in rows if row.get("number") and row.get("headRefOid")),
+        reverse=True,
+    )
+    note = (f"read the newest {MERGED_PR_LIMIT} merged PRs of {branch}; an older one is not considered"
+            if len(rows) >= MERGED_PR_LIMIT else None)
+    return [(number, head, squash) for _merged, number, head, squash in prs if squash], note
+
+
+def adopt_squash(root):
+    """Record this branch's own squash-merged PRs as merged, so merging main in starts
+    from them instead of replaying their changes against this branch's later work."""
+    branch = git(root, "branch", "--show-current").decode().strip()
+    if not branch:
+        print("refused: HEAD is detached; adopt-squash runs on the branch being shipped")
+        return 1
+    if not is_commit(root, MAIN_REF):
+        print(f"refused: {MAIN_REF} is missing; `git fetch origin main` first")
+        return 1
+    if is_ancestor(root, "HEAD", MAIN_REF):
+        print(f"adopted nothing: {branch} is already part of the fetched main")
+        return 0
+    if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=root).returncode != 0:
+        print("refused: changes are staged; commit them first, so that the adoption changes no file")
+        return 1
+    prs, note = merged_prs(root, branch)
+    if prs is None:
+        print(f"adopted nothing: {note}. Merging main in may then report this branch's merged "
+              "changes as conflicts")
+        return 0
+    if note:
+        print(note)
+    adopted = reported = 0
+    for number, head, squash in prs:
+        if not is_commit(root, squash):
+            print(f"#{number} not adopted: its squash commit {squash[:12]} is not in this clone; "
+                  "`git fetch origin main` first")
+            reported += 1
+            continue
+        if is_ancestor(root, squash, "HEAD"):
+            continue  # already part of this branch
+        if not is_ancestor(root, squash, MAIN_REF):
+            print(f"#{number} not adopted: its merge commit {squash[:12]} is not part of {MAIN_REF}")
+            reported += 1
+            continue
+        if not is_commit(root, head) or not is_ancestor(root, head, "HEAD"):
+            print(f"#{number} not adopted: its head {head[:12]} is not in this branch's history")
+            reported += 1
+            continue
+        if tree_of(root, head) != tree_of(root, squash):
+            print(f"#{number} not adopted: main's squash commit {squash[:12]} does not have the tree of "
+                  f"the PR's head {head[:12]} (main moved after the head's last integration), so "
+                  "recording it as merged could drop main's changes. Merging main in replays the PR's "
+                  "changes; conflicts in the files it changed are this branch against itself")
+            reported += 1
+            continue
+        before, tree = git(root, "rev-parse", "HEAD").decode().strip(), tree_of(root, "HEAD")
+        merge = subprocess.run(["git", "merge", "--no-ff", "-s", "ours", "--no-edit",
+                                "-m", f"chore: adopt squash-merged #{number}", squash],
+                               cwd=root, capture_output=True)
+        if merge.returncode != 0:
+            detail = (merge.stderr or merge.stdout).decode(errors="replace").strip()
+            print(f"refused: `git merge -s ours {squash[:12]}` failed: {detail}")
+            return 1
+        parents = git(root, "rev-list", "--parents", "-n", "1", "HEAD").decode().split()[1:]
+        if parents != [before, squash] or tree_of(root, "HEAD") != tree:
+            print(f"refused: the adoption commit of #{number} is not a merge of {before[:12]} and "
+                  f"{squash[:12]} with an unchanged tree (a hook?); read `git show --stat HEAD`")
+            return 1
+        print(f"adopted #{number}: main's squash commit {squash[:12]} has exactly the tree of this "
+              f"branch's {head[:12]}, so it is recorded as merged and no file changes")
+        adopted += 1
+    if not adopted and not reported:
+        print(f"adopted nothing: no merged PR of {branch} is missing from it"
+              if prs else f"adopted nothing: no PR with {branch} as its head was merged")
+    return 0
+
+
 def main(argv):
     args = argv[1:]
     try:
@@ -365,6 +496,8 @@ def main(argv):
             return check_commit(root, args[2])
         if args == ["integrate"]:
             return integrate(root)
+        if args == ["adopt-squash"]:
+            return adopt_squash(root)
     except Refusal as refusal:
         print(f"refused: {refusal}")
         return 1
@@ -372,7 +505,7 @@ def main(argv):
         detail = (error.stderr or b"").decode(errors="replace").strip()
         print(f"refused: `{' '.join(error.cmd)}` failed: {detail}")
         return 1
-    print("usage: verify-state.py record | check [--commit <rev>] | integrate", file=sys.stderr)
+    print("usage: verify-state.py record | check [--commit <rev>] | adopt-squash | integrate", file=sys.stderr)
     return 2
 
 

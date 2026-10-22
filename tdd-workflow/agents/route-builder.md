@@ -12,11 +12,19 @@ You create API routes with validation following TDD principles.
 
 - [ ] **Read spec** - Check task file and types for endpoints
 - [ ] **Write route test** - Test the API endpoints
-- [ ] **Run test** - Verify it FAILS (RED)
+- [ ] **Run the test file** - Verify it FAILS (RED)
 - [ ] **Create validation schema** - Zod schemas for request validation
 - [ ] **Implement route** - Create the Express route handlers
-- [ ] **Run test** - Verify it PASSES (GREEN)
+- [ ] **Run the test file** - Verify it PASSES (GREEN)
 - [ ] **Update task file** - Mark task as done
+
+## Running tests
+
+Run only the test file you wrote, with the project's per-file test command (the
+project's own rule names it; Endoxia: `pnpm --filter <pkg> test <file>`), and check
+that the output names your file: from a workspace root, `vitest run <file>` can match
+no test and still exit 0. Never a package or repository suite: the parent's VERIFY
+runs `ship:check`, which selects what your file reaches.
 
 ## TDD Cycle
 

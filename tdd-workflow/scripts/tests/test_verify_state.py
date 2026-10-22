@@ -1,6 +1,7 @@
 """verify-state.py binds the VERIFY verdict to the reviewed contents, not to HEAD."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -390,6 +391,209 @@ class IntegrationTest(unittest.TestCase):
         result = run(other, "check", "--commit", head)
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("verdict from", result.stdout)
+
+
+class AdoptSquashTest(unittest.TestCase):
+    """A branch whose PR was squash-merged keeps going; main moves on. Merging main in
+    must not replay the PR's own changes against the branch's later edits."""
+
+    @classmethod
+    def setUpClass(cls):
+        # Built once and copied per test: a test changes only its own copy.
+        cls.template_dir = tempfile.TemporaryDirectory()
+        root = Path(cls.template_dir.name) / "repo"
+        root.mkdir()
+        g = lambda *a: git(root, *a)
+        rev = lambda r: subprocess.run(["git", "rev-parse", r], cwd=root, capture_output=True,
+                                       text=True, check=True).stdout.strip()
+        g("init", "-q", "-b", "main")
+        for key, value in (("user.email", "t@example.org"), ("user.name", "t"), ("commit.gpgsign", "false")):
+            g("config", key, value)
+        (root / ".gitignore").write_text(".claude/\n")
+        (root / "shared.py").write_text("a = 0\nb = 0\nc = 0\nd = 0\ne = 0\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "chore: base")
+        g("checkout", "-q", "-b", "feature")
+        # The first PR: it changes line a and adds a file.
+        (root / "shared.py").write_text("a = 'pr'\nb = 0\nc = 0\nd = 0\ne = 0\n")
+        (root / "feature.py").write_text("f = 1\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "feat: first PR")
+        cls.head = rev("HEAD")
+        # GitHub squash-merges it: one commit on main with exactly the head's tree.
+        cls.squash = subprocess.run(["git", "commit-tree", cls.head + "^{tree}", "-p", "main", "-m",
+                                     "feat: first PR (#7)"], cwd=root, capture_output=True, text=True,
+                                    check=True).stdout.strip()
+        g("update-ref", "refs/heads/main", cls.squash)
+        # The branch keeps going and edits line a again; main moves on elsewhere.
+        (root / "shared.py").write_text("a = 'later'\nb = 0\nc = 0\nd = 0\ne = 0\n")
+        assert run(root, "record").returncode == 0
+        g("commit", "-q", "-am", "feat: second PR")
+        g("checkout", "-q", "main")
+        (root / "shared.py").write_text("a = 'pr'\nb = 0\nc = 0\nd = 0\ne = 'main'\n")
+        (root / "main_only.py").write_text("m = 1\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "feat: main moves on")
+        g("checkout", "-q", "feature")
+        g("update-ref", "refs/remotes/origin/main", "main")
+        cls.template = root
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.template_dir.cleanup()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.root = base / "repo"
+        shutil.copytree(self.template, self.root, symlinks=True)
+        # A stand-in `gh` on PATH answers `pr list` from a file and logs its arguments.
+        self.bin = base / "bin"
+        self.bin.mkdir()
+        self.prs, self.log = base / "prs.json", base / "gh-argv.jsonl"
+        gh = self.bin / "gh"
+        gh.write_text(f"#!{sys.executable}\nimport json, sys\n"
+                      f"open({str(self.log)!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                      f"text = open({str(self.prs)!r}).read()\n"
+                      "if text == 'FAIL':\n    print('HTTP 502', file=sys.stderr); sys.exit(1)\n"
+                      "print(text)\n")
+        gh.chmod(0o755)
+        self.answer([self.pr(7, self.head, self.squash)])
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def rev(self, rev):
+        return subprocess.run(["git", "rev-parse", rev], cwd=self.root, capture_output=True,
+                              text=True, check=True).stdout.strip()
+
+    def commit_tree(self, tree, parent, message):
+        return subprocess.run(["git", "commit-tree", tree, "-p", parent, "-m", message], cwd=self.root,
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    def pr(self, number, head, squash, merged="2026-10-20T13:37:55Z"):
+        return {"number": number, "headRefOid": head, "mergeCommit": {"oid": squash}, "mergedAt": merged}
+
+    def answer(self, prs):
+        self.prs.write_text(prs if isinstance(prs, str) else json.dumps(prs))
+
+    def adopt(self):
+        env = {**os.environ, "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}"}
+        return subprocess.run([sys.executable, str(SCRIPT), "adopt-squash"], cwd=self.root,
+                              capture_output=True, text=True, env=env)
+
+    def merge_main(self):
+        return subprocess.run(["git", "merge", "--no-edit", "-m", "chore: integrate origin/main before shipping",
+                               "origin/main"], cwd=self.root, capture_output=True, text=True)
+
+    def test_without_adoption_the_branch_conflicts_with_itself(self):
+        merged = self.merge_main()
+        self.assertNotEqual(merged.returncode, 0)
+        self.assertIn("CONFLICT (content): Merge conflict in shared.py", merged.stdout)
+
+    def test_the_squash_commit_is_adopted_and_main_merges_cleanly(self):
+        # Mutation: a real merge instead of `-s ours` conflicts or changes the tree.
+        tree = self.rev("HEAD^{tree}")
+        before = self.rev("HEAD")
+        result = self.adopt()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("adopted #7", result.stdout)
+        self.assertEqual(self.rev("HEAD^{tree}"), tree, "the adoption changes no file")
+        self.assertEqual((self.rev("HEAD^1"), self.rev("HEAD^2")), (before, self.squash))
+        subject = subprocess.run(["git", "log", "-1", "--format=%s"], cwd=self.root, capture_output=True,
+                                 text=True).stdout.strip()
+        self.assertEqual(subject, "chore: adopt squash-merged #7")
+        self.assertEqual(json.loads(self.log.read_text().splitlines()[0]),
+                         ["pr", "list", "--head", "feature", "--state", "merged", "--limit", "100",
+                          "--json", "number,headRefOid,mergeCommit,mergedAt"])
+        # The verdict still covers the adopted commit; then main merges without conflict.
+        self.assertEqual(run(self.root, "check", "--commit", "HEAD").returncode, 0)
+        merged = self.merge_main()
+        self.assertEqual(merged.returncode, 0, merged.stdout + merged.stderr)
+        self.assertEqual((self.root / "shared.py").read_text(), "a = 'later'\nb = 0\nc = 0\nd = 0\ne = 'main'\n")
+        self.assertTrue((self.root / "main_only.py").is_file())
+        integrated = run(self.root, "integrate")
+        self.assertEqual(integrated.returncode, 0, integrated.stdout)
+        self.assertIn("accepted the clean integration", integrated.stdout)
+        self.assertEqual(run(self.root, "check", "--commit", "HEAD").returncode, 0)
+        self.assertEqual(run(self.root, "check").returncode, 0)
+
+    def test_running_it_again_adopts_nothing(self):
+        # Mutation: without the already-merged skip, the second run fails on "Already up to date".
+        self.assertEqual(self.adopt().returncode, 0)
+        head = self.rev("HEAD")
+        again = self.adopt()
+        self.assertEqual(again.returncode, 0, again.stdout)
+        self.assertIn("adopted nothing: no merged PR of feature is missing from it", again.stdout)
+        self.assertEqual(self.rev("HEAD"), head)
+
+    def test_a_squash_with_another_tree_is_not_adopted(self):
+        # Main moved between the head's integration and the squash: recording it as
+        # merged would drop main's change. Mutation: without the tree check it is adopted.
+        other = self.commit_tree(self.rev("main^{tree}"), self.squash, "feat: squash with main's later tree")
+        git(self.root, "update-ref", "refs/remotes/origin/main", other)
+        self.answer([self.pr(7, self.head, other)])
+        head = self.rev("HEAD")
+        result = self.adopt()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("#7 not adopted: main's squash commit", result.stdout)
+        self.assertIn("does not have the tree", result.stdout)
+        self.assertEqual(self.rev("HEAD"), head)
+
+    def test_a_pr_whose_head_is_not_in_this_branch_is_not_adopted(self):
+        # A branch of the same name from before, or a fork. Mutation: without the
+        # ancestry check its squash is adopted.
+        stranger = self.commit_tree(self.rev("HEAD~1^{tree}"), self.rev("main~2"), "feat: elsewhere")
+        squash = self.commit_tree(stranger + "^{tree}", "main", "feat: elsewhere (#3)")
+        git(self.root, "update-ref", "refs/remotes/origin/main", squash)
+        self.answer([self.pr(3, stranger, squash)])
+        head = self.rev("HEAD")
+        result = self.adopt()
+        self.assertIn("#3 not adopted: its head", result.stdout)
+        self.assertIn("is not in this branch's history", result.stdout)
+        self.assertEqual(self.rev("HEAD"), head)
+
+    def test_a_merge_commit_outside_the_fetched_main_is_not_adopted(self):
+        # A PR merged into another base. Mutation: without the main check it is adopted.
+        git(self.root, "update-ref", "refs/remotes/origin/main", self.rev("main~2"))
+        result = self.adopt()
+        self.assertIn(f"#7 not adopted: its merge commit {self.squash[:12]} is not part of", result.stdout)
+        self.assertNotIn("adopted #7", result.stdout)
+
+    def test_an_unreadable_pr_list_adopts_nothing_and_says_so(self):
+        self.answer("FAIL")
+        head = self.rev("HEAD")
+        result = self.adopt()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("adopted nothing: `gh pr list` failed: HTTP 502", result.stdout)
+        self.assertEqual(self.rev("HEAD"), head)
+
+    def test_staged_changes_are_refused(self):
+        # Mutation: without the refusal, git's own merge-ours fails with a bare exit.
+        (self.root / "feature.py").write_text("f = 'staged'\n")
+        git(self.root, "add", "feature.py")
+        result = self.adopt()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("refused: changes are staged", result.stdout)
+
+    def test_newest_merge_first_and_older_ones_come_with_it(self):
+        # Two PRs of this branch, both squash-merged with their heads' trees. The
+        # newest adoption brings the older squash commit along: one commit.
+        git(self.root, "checkout", "-q", "feature")
+        (self.root / "feature.py").write_text("f = 2\n")
+        git(self.root, "commit", "-q", "-am", "feat: third PR")
+        head2 = self.rev("HEAD")
+        squash2 = self.commit_tree(head2 + "^{tree}", self.squash, "feat: second and third (#8)")
+        main_tip = self.commit_tree(self.rev("main^{tree}"), squash2, "feat: main moves on")
+        git(self.root, "update-ref", "refs/remotes/origin/main", main_tip)
+        self.assertEqual(run(self.root, "record").returncode, 0)
+        self.answer([self.pr(7, self.head, self.squash, "2026-10-20T13:37:55Z"),
+                     self.pr(8, head2, squash2, "2026-10-21T07:25:25Z")])
+        result = self.adopt()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("adopted #8", result.stdout)
+        self.assertNotIn("adopted #7", result.stdout)
+        self.assertEqual(self.rev("HEAD^2"), squash2)
 
 
 if __name__ == "__main__":

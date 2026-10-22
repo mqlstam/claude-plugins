@@ -42,15 +42,40 @@ The one place fan-out is still the default is **reading**: refactor's ANALYZE ph
 runs four read-only agents over four disjoint questions. Fanning out to FIND is cheap.
 Fanning out to WRITE is what costs.
 
+## Running tests: the files you touched, not the suite
+
+- **While building, run the test files you touched and the direct tests of the
+  modules you changed**, with the project's per-file test command. The project's own
+  rule names it (Endoxia: `.claude/rules/running-tests.md`, which runs
+  `pnpm --filter <pkg> test <file>…`). Check that the output names your file: in a
+  workspace, `vitest run <file>` from the repository root can match no test and
+  still exit 0, a run that proves nothing.
+- **The project's `ship:check` selects the rest** at VERIFY and /ship (importers,
+  snapshot owners, a package suite when a test config or shared helper changed).
+  Running that selection by hand first does the gate's work twice.
+- **A whole package or repository suite needs a stated reason** (a test config, a
+  setup file or a shared testing helper changed; a failure the gate reported is being
+  reproduced), and runs one at a time.
+
+Several sessions building at once share one machine: suites and per-mutant drivers
+each started by an agent took it to a load of 37-83 with no idle CPU (Endoxia,
+2026-10-21). The owner's decision is to keep the work small, not to add limits.
+
 ## Mutation proof — the ceremony worth keeping
+
+One mutant at a time, against the ONE test file that must turn red. Never a loop or
+driver that runs a suite per mutant, and never two at once.
 
 ```bash
 cp path/to/file.ts /tmp/file.ts.bak     # snapshot FIRST
 # revert the line that implements the behaviour
-pnpm exec vitest run path/to/file.test.ts   # MUST go red, naming the behaviour
+<per-file test command> path/to/file.test.ts   # MUST go red, naming the behaviour
 cp /tmp/file.ts.bak path/to/file.ts     # restore
-pnpm exec vitest run path/to/file.test.ts   # green again
+<per-file test command> path/to/file.test.ts   # green again
 ```
+
+`<per-file test command>` is the project's (Endoxia: `pnpm --filter <pkg> test <file>`);
+a command that matches no test exits 0 and cannot go red.
 
 **Never restore with `git checkout -- <file>`.** It reverts the file to HEAD, which
 destroys every uncommitted change in it — including work that had nothing to do with

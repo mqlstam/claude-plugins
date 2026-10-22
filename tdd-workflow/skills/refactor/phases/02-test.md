@@ -21,7 +21,9 @@ Use `refactor-test-writer` — one per affected layer, launched in parallel if m
 
 2. Each test writer:
    - Writes tests for the NEW structure (not the old one)
-   - Runs tests — must FAIL (RED state)
+   - Runs only the test files it wrote, with the project's per-file test command
+     (Endoxia: `pnpm --filter <pkg> test <file>`) — they must FAIL (RED state), and
+     the output must name them: a command that matches no test exits 0
    - Reports RED confirmation
 
 3. Wait for ALL test writers to report RED
