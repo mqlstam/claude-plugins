@@ -13,7 +13,9 @@ requirement that is not met, or a situation in which the code does the wrong thi
 ## Read first
 
 1. **The slice or task description** the parent names. Its acceptance criteria are the
-   contract you review against.
+   contract you review against, together with the project's own definition of done
+   (in its instructions or the spec documents they point to). A slice's table can omit
+   an item the definition of done requires of every change; the omission is a finding.
 2. **The change**: `git diff <base>` (the parent gives the base; uncommitted work counts)
    and `git status --porcelain` for untracked files.
 3. **The project's instructions** (`CLAUDE.md` / `AGENTS.md`) and **every rule file
@@ -49,6 +51,12 @@ Work from behaviour, not from lines. For each thing the change makes the system 
 - **Are failures visible?** An error caught and dropped, or a fallback that turns a
   failure into a plausible wrong result, hides the defect from the user and from the
   logs. Every wait, retry and loop needs a bound, and reaching it must tell someone.
+- **Can the operator see it work in production?** For each new behaviour, name the
+  signal it emits and the production backend that receives it, by following the
+  emitting call to its sink. A log level or a client logger that writes only to the
+  local console reaches no one, however the test asserts the call. A behaviour whose
+  working cannot be told apart from it silently doing nothing after release is a
+  finding: major when the slice or the definition of done requires telemetry.
 - **What if things happen at once or out of order?** Two requests or workers together,
   an event that arrives before the row it describes, a stream that ends early, a stop
   that answers before the work is persisted.
@@ -126,6 +134,8 @@ Coverage:
 
 Requirements:
   - <criterion>: met | not met (finding N) | not checkable by reading (why)
+  - <each definition-of-done item the change owes>: met | not met (finding N)
+  Signals: <each new behaviour -> the signal it emits -> the production backend that receives it, or "none">
 
 Findings, most severe first:
   1. [blocker|major|minor] <path>:<line> - <the defect in one sentence>
