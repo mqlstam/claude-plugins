@@ -261,6 +261,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import time
@@ -526,6 +527,54 @@ def _strip_redirects(raw: str) -> str:
 def _literal(value: str | None) -> bool:
     """A value written out in the command, not computed when it runs."""
     return bool(value) and not re.search(r"[$`*?]", value)
+
+
+# --------------------------------------------------------------------------
+# The owner's standing approval.
+# --------------------------------------------------------------------------
+
+# Owner, 2026-10-28 ("geen stop, full send"): one file outside every repository
+# turns the per-release approval off for the release skills it names. While it
+# exists, the model may invoke those skills and run their release commands
+# without a typed /approve. Everything else stays: one release per call, no pipe
+# after a release command, releases only in the main conversation, and an agent
+# never writes a pull request review. The gate reads the file on every call, so
+# deleting it restores the per-release approval at once. The file is the owner's:
+# an agent never creates or edits it. Unreadable, malformed, not the user's own,
+# or writable by others: it approves nothing, and `--status` says why, because a
+# broken switch must never read as "on".
+STANDING_ENV = "CLAUDE_TDD_RELEASE_APPROVAL_CONFIG"
+STANDING_DEFAULT = "~/.config/claude-tdd-workflow/release-approval.json"
+
+
+class StandingError(Exception):
+    """The standing-approval file exists but cannot be used: it approves nothing."""
+
+
+def standing_path() -> str:
+    return os.path.expanduser(os.environ.get(STANDING_ENV) or STANDING_DEFAULT)
+
+
+def load_standing(path: str | None = None) -> frozenset[str] | None:
+    """The release skills the owner approved standing, None when the file is absent.
+    `{"standing": ["ship", "deploy", "promote", ...]}`; other keys are notes."""
+    path = path or standing_path()
+    if not os.path.exists(path):
+        return None
+    info = os.stat(path)
+    if info.st_uid != os.getuid():
+        raise StandingError(f"{path} is not owned by this user")
+    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise StandingError(f"{path} is writable by others (mode {stat.S_IMODE(info.st_mode):o}); chmod 600 it")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as error:
+        raise StandingError(f"{path} is unreadable ({error})") from error
+    skills = data.get("standing") if isinstance(data, dict) else None
+    if not isinstance(skills, list) or not skills or not all(isinstance(n, str) and n.strip() for n in skills):
+        raise StandingError(f'{path}: "standing" must be a non-empty list of release skill names')
+    return frozenset(bare(n.strip()) for n in skills)
 
 
 # --------------------------------------------------------------------------
@@ -1988,8 +2037,13 @@ class World:
     environment (`_lookup_env`)."""
 
     def __init__(self, run=subprocess.run, clock=time.monotonic, budget_s: float = LOOKUP_BUDGET_S,
-                 wall=time.time, app_config=None, load_app_config=agent_app.load_config):
+                 wall=time.time, app_config=None, load_app_config=agent_app.load_config,
+                 load_standing=load_standing):
         self._run = run
+        # The owner's standing approval, read once per decision (load_standing).
+        self._load_standing = load_standing
+        self._standing: frozenset[str] = frozenset()
+        self.standing_problem: str | None = None
         # The agent App's config, read only when a review could approve something:
         # None when this machine has not opted in, or when its config is unusable
         # (`app_config_problem` says why; a broken config approves nothing).
@@ -2044,6 +2098,24 @@ class World:
         if not isinstance(data, dict) or not data.get("state"):
             return None
         return PrState(str(data["state"]).upper(), (data.get("mergeCommit") or {}).get("oid"), data.get("url"))
+
+    @property
+    def standing(self) -> frozenset[str]:
+        """The release skills the owner approved standing; empty when none or unusable."""
+        if self._load_standing is not None:
+            loader, self._load_standing = self._load_standing, None
+            try:
+                self._standing = loader() or frozenset()
+            except StandingError as error:
+                self.standing_problem = str(error)
+        return self._standing
+
+    def standing_actions(self, resolver: "SkillResolver") -> set[str]:
+        """The release actions the standing approval covers, a rerun of a failed run included."""
+        actions: set[str] = set()
+        for name in self.standing:
+            actions |= set(resolver.actions(name)) | set(resolver.follow_on(name))
+        return actions | {"rerun"} if actions else actions
 
     @property
     def app_config(self) -> "agent_app.AppConfig | None":
@@ -2836,6 +2908,8 @@ def decide_skill(payload: dict, resolver: SkillResolver, read=build_ledger, slee
                 f"not inside a subagent. Return to the main conversation and invoke it there.")
     history_scope = history_scope or release_scope(payload.get("cwd") or os.getcwd())
     world = world or World()
+    if b in world.standing:
+        return None
     for attempt in range(2):
         ledger = read(payload.get("transcript_path") or "", payload.get("tool_use_id"), resolver,
                       history_scope, world)
@@ -2904,10 +2978,12 @@ def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
                 f"release command per call: one merge, one push to main, one deploy tag pushed by its "
                 f"literal name (`git push origin deploy-<TS>`, never `--tags`), or one dispatch. "
                 f"Nothing was used.")
+    world = world or World()
+    if classes <= world.standing_actions(resolver):
+        return None
     missing: list[str] = []
     review_note: str | None = None
     history_scope = history_scope or release_scope(payload.get("cwd") or os.getcwd())
-    world = world or World()
     ledger: Ledger | None = None
     tag_sha: str | None = None
     tags = details.get("tags") or []
@@ -2972,8 +3048,19 @@ def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
 def status(transcript_path: str, cwd: str, scope: RepoScope | None = None,
            world: World | None = None, resolver: SkillResolver | None = None) -> str:
     resolver = resolver or SkillResolver(cwd)
+    world = world or World()
     ledger = build_ledger(transcript_path, None, resolver, scope, world)
     lines = []
+    if world.standing:
+        lines.append(f"Standing approval ON ({standing_path()}): "
+                     + ", ".join(sorted(world.standing))
+                     + " run without a per-release approval. Deleting the file turns it off.")
+        stray = sorted(n for n in world.standing if not resolver.actions(n))
+        if stray:
+            lines.append("Not release skills here (the standing approval covers nothing for them): "
+                         + ", ".join(stray))
+    elif world.standing_problem:
+        lines.append(f"Standing approval file unusable, so it approves nothing: {world.standing_problem}")
     if ledger.last_approve_args:
         lines.append("Last /approve named: " + ", ".join(ledger.last_approve_args))
         unknown = [n for n in ledger.last_approve_args if not resolver.actions(n)]

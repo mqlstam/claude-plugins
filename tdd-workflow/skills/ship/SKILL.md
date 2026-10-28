@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Land the pull request the owner reviewed - check it is exactly the reviewed work with that review's evidence, integrate main if GitHub needs it, squash-merge that PR head, then deploy the merge commit to staging and watch it to its verdict. Runs when the user types /ship, after /approve ship, or when the owner approved the agent App's PR on GitHub; that one approval covers the merge and the staging deploy of what it merged. Opening the PR for review (phase 1) needs no approval and runs at the end of VERIFY.
+description: Land the pull request the owner reviewed - check it is exactly the reviewed work with that review's evidence, integrate main if GitHub needs it, squash-merge that PR head, then deploy the merge commit to staging and watch it to its verdict. Runs when the user types /ship, after /approve ship, when the owner approved the agent App's PR on GitHub, or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md); that one approval covers the merge and the staging deploy of what it merged. Opening the PR for review (phase 1) needs no approval and runs at the end of VERIFY.
 release-actions: merge
 release-follow-on: deploy-tag
 argument-hint: "[PR title]"
@@ -29,7 +29,9 @@ Stay on this branch; use a feature branch for /ship. Main uses /quickship.
 
 **The approval** is one of: the typed `/ship`, `/approve ship` as a message of its
 own, or (where this machine has the agent App, `${CLAUDE_PLUGIN_ROOT}/docs/APP-SETUP.md`)
-the owner's approving review on GitHub of the PR the App opened. The release gate
+the owner's approving review on GitHub of the PR the App opened, or the owner's
+standing approval naming `ship` (`${CLAUDE_PLUGIN_ROOT}/docs/STANDING-APPROVAL.md`):
+while it is on, nothing waits for the owner. The release gate
 reads that review when the merge runs: the owner's newest deciding review is
 APPROVED on exactly the PR's head. As on GitHub, a comment after it keeps it; a later
 commit, a dismissal or a "changes requested" means no approval. Whichever it is, the approval is spent by the

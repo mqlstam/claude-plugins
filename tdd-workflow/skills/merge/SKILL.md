@@ -1,6 +1,6 @@
 ---
 name: merge
-description: Squash-merge a PR directly into main. Runs when the user types /merge, or after /approve merge (one run).
+description: Squash-merge a PR directly into main. Runs when the user types /merge, after /approve merge (one run), or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md).
 release-actions: merge
 argument-hint: "[PR number or branch name]"
 ---

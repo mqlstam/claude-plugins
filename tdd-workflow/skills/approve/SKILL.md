@@ -55,6 +55,11 @@ What it allows:
 - If the user types the skill themselves while its approval is open, that run
   uses the approval.
 
+The owner can also turn the per-release approval off altogether: the standing
+approval file (`${CLAUDE_PLUGIN_ROOT}/docs/STANDING-APPROVAL.md`). While it names a
+skill, that skill and its release commands run without `/approve`. Only the owner
+creates, edits or deletes that file; never you.
+
 Do this now:
 
 1. Run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/release-approval-gate.py" --status --session ${CLAUDE_SESSION_ID} --cwd "$PWD"`

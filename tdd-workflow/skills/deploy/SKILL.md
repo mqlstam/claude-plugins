@@ -1,6 +1,6 @@
 ---
 name: deploy
-description: Release current main to staging, by joining a deploy run that already builds it or by pushing a deploy-* tag. Merging never deploys; production is reached only by promoting what staging serves (/promote). Runs when the user types /deploy, or after /approve deploy (one run).
+description: Release current main to staging, by joining a deploy run that already builds it or by pushing a deploy-* tag. Merging never deploys; production is reached only by promoting what staging serves (/promote). Runs when the user types /deploy, after /approve deploy (one run), or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md).
 release-actions: deploy-tag
 argument-hint: ""
 allowed-tools: Bash(git *), Bash(gh *), Bash(date *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py *)

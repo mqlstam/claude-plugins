@@ -1,6 +1,6 @@
 ---
 name: quickship
-description: Validate, commit, merge origin/main and push directly to main without a PR, then deploy the pushed commit to staging. Runs when the user types /quickship, or after /approve quickship; that one approval covers the push and the staging deploy of what it pushed.
+description: Validate, commit, merge origin/main and push directly to main without a PR, then deploy the pushed commit to staging. Runs when the user types /quickship, after /approve quickship, or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md); that one approval covers the push and the staging deploy of what it pushed.
 release-actions: push-main
 release-follow-on: deploy-tag
 argument-hint: "[commit message]"

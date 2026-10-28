@@ -74,6 +74,11 @@ Attachments are uploaded with your own `gh`: gh refuses an App's token for them.
    name any that still fail. A gh without `--attach` leaves the references
    unplayable: say so in the report, never silently.
 
+Under the owner's standing approval for `ship` (`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-approval-gate.py
+--status --session ${CLAUDE_SESSION_ID} --cwd "$PWD"` prints `Standing approval ON` naming ship),
+nothing waits for the owner: do steps 8 and 9, then land it at once with `/ship`
+(phase 2) in this turn. The evidence stays on the PR for the owner to watch later.
+
 8. **Link the PR to the thread.** In T3 Code, `link_pull_request` with the PR URL.
    Then `watch_pull_request` on it, so T3 wakes this chat when the owner reviews or
    comments (or a check fails); end the turn after the report. Without the watch

@@ -13,6 +13,9 @@ SPEC = importlib.util.spec_from_file_location(
 gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
 
+# A real standing approval on this machine must not change any test's answer.
+os.environ[gate.STANDING_ENV] = os.path.join(HERE, "no-such-standing-approval.json")
+
 ACTIONS = {
     "ship": ("merge",),
     "quickship": ("push-main",),
@@ -43,9 +46,11 @@ class FakeWorld(gate.World):
     no tag is on origin, no tag exists locally, no commit is on main."""
 
     def __init__(self, prs=None, remote_tags=None, local_tags=None, on_main=(), run_info=None,
-                 runs_since=None, run_started=None, now=ATTEMPT + 3600):
-        # No agent App on this machine unless a test says so (test_review_approval.py).
-        super().__init__(run=self._no_subprocess, wall=lambda: now, load_app_config=lambda: None)
+                 runs_since=None, run_started=None, now=ATTEMPT + 3600, standing=None):
+        # No agent App on this machine unless a test says so (test_review_approval.py),
+        # and no standing approval unless a test names its skills.
+        super().__init__(run=self._no_subprocess, wall=lambda: now, load_app_config=lambda: None,
+                         load_standing=lambda: frozenset(standing) if standing else None)
         self.runs_since = dict(runs_since or {})  # workflow -> True | None; default False (no run)
         self.started = dict(run_started or {})  # run id -> epoch | None; default long before
         self.prs = dict(prs or {})  # ref -> ("MERGED", sha) | None (GitHub cannot say)
@@ -2711,6 +2716,108 @@ class CdpathTest(unittest.TestCase):
         with inherited(CDPATH="/work"):
             self.assertEqual(self.c("git -C endoxia push origin main"), set())
             self.assertEqual(self.c("env -C endoxia gh pr merge 3 -R mqlstam/EABOS"), set())
+
+
+class StandingApproval(unittest.TestCase):
+    """Owner, 2026-10-28: "geen stop, full send". A file the owner keeps turns the
+    per-release approval off for the skills it names; the other refusals stay."""
+
+    ALL = ("ship", "quickship", "merge", "deploy", "promote", "release", "hotfix")
+
+    def test_a_standing_skill_runs_without_an_approval(self):
+        world = FakeWorld(standing=self.ALL)
+        for name in ("ship", "claude-tdd-workflow:ship", "deploy", "promote", "hotfix"):
+            self.assertIsNone(skill_decision(Transcript(), name, world=world), name)
+
+    def test_its_release_commands_run_without_an_approval(self):
+        world = FakeWorld(standing=self.ALL)
+        for command in ("gh pr merge 12 --squash --match-head-commit " + "a" * 40,
+                        "git push origin deploy-20261028-210000",
+                        "gh workflow run promote.yml -f sha=" + "a" * 40,
+                        "gh run rerun 555 --failed"):
+            self.assertIsNone(bash_decision(Transcript(), command, world=world), command)
+
+    def test_a_skill_it_does_not_name_still_needs_an_approval(self):
+        world = FakeWorld(standing=("ship",))
+        self.assertIsNone(skill_decision(Transcript(), "ship", world=world))
+        self.assertIsNotNone(skill_decision(Transcript(), "promote", world=world))
+        self.assertIsNotNone(bash_decision(Transcript(), "gh workflow run promote.yml -f sha=" + "a" * 40,
+                                           world=world))
+        # ship's follow-on covers its staging tag; a merge of its own.
+        self.assertIsNone(bash_decision(Transcript(), "git push origin deploy-20261028-210000", world=world))
+
+    def test_without_the_file_nothing_changes(self):
+        self.assertIsNotNone(skill_decision(Transcript(), "ship"))
+        self.assertIsNotNone(bash_decision(Transcript(), "gh pr merge 12 --squash"))
+
+    def test_the_structural_refusals_stay(self):
+        world = FakeWorld(standing=self.ALL)
+        self.assertIn("subagent", skill_decision(Transcript(), "ship", world=world, agent_id="a1"))
+        self.assertIn("subagent", bash_decision(Transcript(), "gh pr merge 12 --squash", world=world,
+                                                agent_id="a1"))
+        self.assertIn("pipe", bash_decision(Transcript(), "git push origin deploy-1 2>&1 | tail -3",
+                                            world=world))
+        self.assertIn("2 release actions", bash_decision(Transcript(), "gh pr merge 12 --squash && "
+                                                         "gh pr merge 13 --squash", world=world))
+        self.assertIn("review", bash_decision(Transcript(), "gh pr review 12 --approve", world=world))
+
+    def test_status_says_it_is_on(self):
+        text = status_text(Transcript(), FakeWorld(standing=("ship", "promote", "launch")))
+        self.assertIn("Standing approval ON", text)
+        self.assertIn("promote, ship", text)
+        self.assertIn("launch", text.split("Not release skills here")[1])
+
+
+class StandingApprovalFile(unittest.TestCase):
+    """The switch is a file; a broken one approves nothing and says why."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, "release-approval.json")
+
+    def tearDown(self):
+        for name in os.listdir(self.dir):
+            os.unlink(os.path.join(self.dir, name))
+        os.rmdir(self.dir)
+
+    def write(self, text, mode=0o600):
+        with open(self.path, "w") as fh:
+            fh.write(text)
+        os.chmod(self.path, mode)
+
+    def test_absent_is_off(self):
+        self.assertIsNone(gate.load_standing(self.path))
+
+    def test_it_reads_the_named_skills(self):
+        self.write('{"standing": ["ship", "claude-tdd-workflow:promote"], "since": "2026-10-28"}')
+        self.assertEqual(gate.load_standing(self.path), frozenset({"ship", "promote"}))
+
+    def test_a_broken_file_approves_nothing(self):
+        for text in ("not json", "[]", '{"standing": []}', '{"standing": "ship"}', '{"standing": [1]}',
+                     '{"other": ["ship"]}'):
+            self.write(text)
+            with self.assertRaises(gate.StandingError, msg=text):
+                gate.load_standing(self.path)
+
+    def test_a_file_others_can_write_approves_nothing(self):
+        self.write('{"standing": ["ship"]}', mode=0o666)
+        with self.assertRaisesRegex(gate.StandingError, "writable by others"):
+            gate.load_standing(self.path)
+
+    def test_the_world_reports_a_broken_file_and_stays_off(self):
+        self.write("not json")
+        world = gate.World(run=no_github, load_standing=lambda: gate.load_standing(self.path))
+        self.assertEqual(world.standing, frozenset())
+        self.assertIn("unreadable", world.standing_problem)
+
+    def test_the_env_names_the_file(self):
+        self.write('{"standing": ["deploy"]}')
+        old = os.environ.get(gate.STANDING_ENV)
+        os.environ[gate.STANDING_ENV] = self.path
+        try:
+            self.assertEqual(gate.load_standing(), frozenset({"deploy"}))
+        finally:
+            os.environ[gate.STANDING_ENV] = old
 
 
 if __name__ == "__main__":
