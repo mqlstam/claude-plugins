@@ -109,27 +109,42 @@ Before joining or tagging, read the newest health status for this exact SHA:
 
 7. **The verdict, in this turn.** Run in the foreground, with the Bash tool's
    `timeout` at 600000 (its maximum):
-   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py await <id> --deadline-min 190 --slice-min 9`
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py await <id> --deadline-min 268 --slice-min 9`
    Exit 6 (`release_run_still_running`) means the slice ended and the run goes
    on: say in one line "run `<id>` is `<status>`, still watching" and run the
    same command again. No `sleep`, no run watch, and no end of the turn between
    slices. When another deploy run is `in_progress` ahead of `<id>`
-   (step 3 listed one, or `<id>` is not `in_progress` itself), use
-   `--deadline-min 365` instead: `<id>` starts only when that run ends.
+   (step 3 listed one, or `<id>` is not `in_progress` itself), `<id>` starts
+   only when that run ends: use `--deadline-min 521` when the run ahead's
+   `event` is `push` (a tag, staging only), and `--deadline-min 729` when it is
+   `workflow_dispatch` (its target may be `both`).
 
    The deadline counts from the run's own start (GitHub's `run_started_at`), so
-   every slice measures against the same bound. The 190 minutes: the longest
-   chain of job `timeout-minutes` from the tag to staging is 175 (deploy.yml:
-   `changes` 10 → `build-and-push` or `docx-sandbox-image` 45 →
-   `release-manifest` 5; then release.yml: `verify-images` 10 → `deploy` 85 →
-   `verify` 10 → `notify` 10), plus 15 minutes for runners to pick the jobs up (a
-   placeholder: GitHub does not bound queueing). 365 is the run ahead's 175 plus
-   this one's 190. Re-derive when a timeout in either workflow changes. A slice
-   is 9 minutes because the Bash tool stops a foreground command at 10.
+   every slice measures against the same bound. The 268 minutes: the longest
+   chain of job `timeout-minutes` from the tag to the staging verdict is 253
+   (deploy.yml: `changes` 10 → `build-and-push` 45 at its largest matrix entry,
+   or `docx-sandbox-image` 45 → `release-manifest` 5 = 60, with `smoke` 20,
+   `integration` 17, `integration-long` 30, `integration-quarantine` 6 and
+   `migrations` 5 beside it from t=0; then release.yml for staging:
+   `verify-images` 10 → `deploy` 163 → `verify` 10 → `notify` 10 = 193, `admit`
+   skipped on staging, `notify` also waiting on `sourcemaps` 10 beside
+   `verify`), plus 15 minutes for runners to pick the jobs up (a placeholder:
+   GitHub does not bound queueing). Every tag and dispatch of deploy.yml shares
+   its `deploy-staging` group, and release.yml holds `release-staging` for
+   staging and `production-lane` for production at workflow level, so the run
+   ahead holds this one for its whole chain: a tag's 253, giving 521 with this
+   one's 268; a dispatch with `target=both` 461 (the 253, then release.yml for
+   production: `verify-images` 10 → `admit` 15 → `deploy` 163 → `verify` 10 →
+   `notify` or `tag-production` 10 = 208; `gate` 49 runs beside the builds),
+   giving 729. A run ahead whose production section also queues in
+   `production-lane` behind a `/promote` can pass even that bound; the
+   NOT CONCLUDED line below covers it. Derived from Endoxia #1765 (slice 975);
+   re-derive when a timeout or concurrency group in either workflow changes. A
+   slice is 9 minutes because the Bash tool stops a foreground command at 10.
    At the run's bound the script exits 5 with `release_run_await_deadline NOT CONCLUDED`.
    Then the FIRST line of the message is: "NOT CONCLUDED: run `<id>` is `<status>`
-   past its own 190-minute bound (365 behind another run) (`<url>`); it has no
-   verdict and is not done."
+   past its own 268-minute bound (521 behind a tag run, 729 behind a dispatch)
+   (`<url>`); it has no verdict and is not done."
    Never report it as succeeded, failed or finished, and never say "I'll report
    back". The run stays visible: `pnpm release:status` lists it under "Open release
    runs" until it concludes, so the next status check shows it; inside T3 Code the

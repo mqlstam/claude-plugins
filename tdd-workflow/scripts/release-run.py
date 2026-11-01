@@ -72,8 +72,8 @@ FIND_DEADLINE_S = 60
 FIND_POLL_S = 3
 
 # One `gh run view` per poll. A deploy run takes about 22 min (devstudy report),
-# so 30 s adds at most ~2% to the time before the verdict arrives, and a 190 min
-# wait costs at most 380 reads, far inside GitHub's 5,000 an hour.
+# so 30 s adds at most ~2% to the time before the verdict arrives, and a wait of
+# any length costs 120 reads an hour, far inside GitHub's 5,000 an hour.
 AWAIT_POLL_S = 30
 
 # One slice of a foreground wait. Claude Code's Bash tool stops a foreground command

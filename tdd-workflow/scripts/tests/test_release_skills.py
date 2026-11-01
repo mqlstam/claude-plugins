@@ -76,7 +76,7 @@ class ReleaseSkillsTest(unittest.TestCase):
         cmds = commands(text)
         self.assertFalse([c for c in cmds if c.startswith("gh run watch")], "no gh run watch")
         self.assertIn("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py find deploy.yml <SHA>", cmds)
-        self.assertIn("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py await <id> --deadline-min 190 "
+        self.assertIn("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py await <id> --deadline-min 268 "
                       "--slice-min 9", cmds)
         self.assertIn("gh run view <id> --json status,conclusion,headSha", cmds)
         self.assertIn("git push origin deploy-<TS>", cmds)
