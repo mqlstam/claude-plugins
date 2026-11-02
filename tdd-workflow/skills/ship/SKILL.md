@@ -235,7 +235,9 @@ c. **Wait for the queue's verdict in the foreground**, in slices:
      be on, and the PR-side check passes at once, so the unreviewed head could
      enter the queue and merge after you stop: first
      `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py dequeue <PR>`, then STOP
-     and report, as for an unreviewed head.
+     and report, as for an unreviewed head. A `dequeue` that exits `2` is run
+     again once; a second `2` → the report says first that the unreviewed head
+     may still land, and names `dequeue <PR>` as the owner's step.
    - `5` `NOT MERGED` → report the entry's state and position it names, and STOP:
      the PR is still queued and nothing is done.
    - `2` → GitHub could not be read: run the same command again (with the
