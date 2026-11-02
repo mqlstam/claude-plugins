@@ -133,8 +133,12 @@ c. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py await <PR> --head <SHA>
    in the foreground (Bash `timeout` 600000). `6` → the same command again with the
    `--until <E>` it printed. `0` `merged=<M>` → the verdict as step 4 reads it, then
    step 5. `3` `removed` → name the failing merge-group run it prints and STOP: the
-   approval is unspent, and a fix lands under it. `4` `head_moved` → STOP and report
-   the unreviewed head. `5` → report the state and position it names, and STOP.
+   approval is unspent, and a fix lands under it. `4` `head_moved` → first
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py dequeue <PR>` (its auto-merge
+   may still be on and the unreviewed head could enter the queue), then STOP and
+   report the unreviewed head. `5` → report the state and position it names, and
+   STOP. `2` → GitHub could not be read: the same command again (with its
+   `--until <E>`, if any); a second `2` → report it and STOP.
 
 Never push to a branch while its PR is queued: first
 `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py dequeue <PR>`.

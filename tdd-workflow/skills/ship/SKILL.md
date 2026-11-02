@@ -231,10 +231,16 @@ c. **Wait for the queue's verdict in the foreground**, in slices:
      this PR's (a flaky check, an infrastructure failure), report it and STOP. A
      group that failed for ANOTHER queued PR is rebuilt by GitHub with this one
      still queued: `await` keeps waiting then, it does not exit.
-   - `4` `head_moved` → someone pushed to the branch: STOP and report, as for an
-     unreviewed head.
+   - `4` `head_moved` → someone pushed to the branch. Its auto-merge may still
+     be on, and the PR-side check passes at once, so the unreviewed head could
+     enter the queue and merge after you stop: first
+     `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py dequeue <PR>`, then STOP
+     and report, as for an unreviewed head.
    - `5` `NOT MERGED` → report the entry's state and position it names, and STOP:
      the PR is still queued and nothing is done.
+   - `2` → GitHub could not be read: run the same command again (with the
+     `--until <E>` it printed, if any). When it answers `2` again, report it and
+     STOP: the PR is queued and its approval charged until it merges or leaves.
 
 **Never push to a branch while its PR is queued**: a push evicts it from the queue
 (and a later merge would carry an unreviewed head). First

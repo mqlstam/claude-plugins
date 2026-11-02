@@ -78,7 +78,9 @@ exactly the commit that landing put on main (step 8). Production (`/promote`,
      through the merge queue" (a) to (c) says (`${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md`),
      with `<SHA>` = `<C>`: `wait-mergeable.py <PR> --head <C> --queue`, then
      `gh pr merge <PR> --squash --match-head-commit <C>`, then
-     `merge-queue.py await <PR> --head <C> --slice-min 9` in foreground slices.
+     `merge-queue.py await <PR> --head <C> --slice-min 9` in foreground slices,
+     every exit read as /ship's (c) reads it (`head_moved` dequeues first, `2` is
+     read again once).
      `merged=<M>` → `<P>` is `<M>`, the squash commit the queue put on main; delete
      the branch (`gh api -X DELETE repos/:owner/:repo/git/refs/heads/quickship/<S>`,
      a 422 means it is already gone). `removed` → name the failing merge-group run;
