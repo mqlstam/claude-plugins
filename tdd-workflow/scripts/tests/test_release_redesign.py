@@ -9,7 +9,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from test_release_approval_gate import FakeResolver, Transcript, gate, no_sleep, on_branch
+from test_release_approval_gate import FakeResolver, Transcript, gate, merged, no_sleep, on_branch
 from test_release_skills import ROOT, commands, read, skill
 
 INTEGRATION_COMMAND = 'git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main'
@@ -131,7 +131,7 @@ class DirectReleaseTest(unittest.TestCase):
         transcript.bash(command, error=True, output="Exit code 1\nhead changed")
         self.assertIsNone(bash_decision(transcript, command))
         transcript.bash(command)
-        self.assertIsNotNone(bash_decision(transcript, command))
+        self.assertIsNotNone(bash_decision(transcript, command, world=merged("42")))
 
     def test_background_merge_holds_approval_until_a_trusted_failure(self):
         from test_release_approval_gate import FakeWorld, bash_decision
@@ -141,7 +141,9 @@ class DirectReleaseTest(unittest.TestCase):
             task = transcript.bash(command, background=True)
             if status:
                 transcript.notify(task, status, 0)
-            self.assertIsNotNone(bash_decision(transcript, command), status)
+            # Still running: charged on sight; completed: charged by its effect.
+            self.assertIsNotNone(bash_decision(transcript, command,
+                                               world=merged("42") if status else None), status)
         # Ended without a verdict (killed, stopped, unknown): GitHub says whether it merged.
         for status in ("killed", "stopped", "unknown"):
             transcript = Transcript().typed("approve", "merge")
@@ -169,7 +171,7 @@ class DirectReleaseTest(unittest.TestCase):
 class ReleaseRedesignContractTest(unittest.TestCase):
     def test_version_and_no_retired_mechanisms(self):
         manifest = json.loads(read(os.path.join(ROOT, ".claude-plugin", "plugin.json")))
-        self.assertEqual(manifest["version"], "1.10.0")
+        self.assertEqual(manifest["version"], "1.11.0")
         for relative in ("skills/ship/SKILL.md", "skills/ship/generic.md", "skills/merge/SKILL.md", "skills/quickship/SKILL.md",
                          "skills/feature/phases/04-verify.md", "skills/refactor/phases/05-verify.md",
                          "skills/tdd-methodology/SKILL.md", "scripts/instance-manager.py",

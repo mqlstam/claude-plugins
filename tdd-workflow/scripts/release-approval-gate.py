@@ -145,11 +145,20 @@ is fail-closed: a command is charged unless it demonstrably did not take effect.
   * merge and deploy-tag leave a fact GitHub keeps: the PR's state and merge
     commit (`gh pr view <PR>`), the tag on origin (`git ls-remote`). A MERGED PR
     or a present tag is charged, whatever the exit code said (`gh pr merge
-    --delete-branch` exits 1 after a successful merge). A command that FAILED
-    (non-zero exit, `failed` notice, or a background command that ended without
-    a status) is refunded only when every PR / tag it names was written
-    literally and is observably not merged / absent; a command that succeeded
-    is charged even when nothing is visible yet (`--auto` merges later);
+    --delete-branch` exits 1 after a successful merge). A deploy-tag command that
+    FAILED (non-zero exit, `failed` notice, or a background command that ended
+    without a status) is refunded only when every tag it names was written
+    literally and is observably absent;
+  * a merge follows its effect, not its exit code (slice 989). Where the branch
+    requires a merge queue, `gh pr merge` succeeds by ENQUEUEING it, and the
+    queue merges it later or removes it (a failing merge group turns auto-merge
+    off). So: MERGED is charged, with its merge commit as what the release
+    produced; OPEN and pending (in the queue, or auto-merge enabled, `--auto`
+    included: `autoMergeRequest` from `gh pr view`, `isInMergeQueue` from one
+    GraphQL read) is charged, so no second PR rides the approval meanwhile; OPEN
+    with neither, or CLOSED unmerged, is NOT charged, whatever the exit code, when
+    every PR the command names was written literally and read. A merge command
+    still running is charged;
   * "ran alone" means one command besides plain `cd`s (round 12): a `cd` prints
     nothing a release's output could be mistaken for, and when it fails the
     release after `&&` does not run;
@@ -211,11 +220,17 @@ whose count git decides is refused the same way: `--tags`, `--follow-tags`,
 `--mirror`, `--all`, a wildcard refspec, or more than one destination ref
 (`git push origin main master`, `git push origin deploy-1 deploy-2`).
 
+ONE OF SEVERAL ACTIONS. `release-actions: a, b` covers one effect of EACH
+(`dispatch, merge` on /hotfix); `release-actions: a | b` covers ONE effect of
+EITHER (`push-main | merge` on /quickship, which pushes to main where the branch
+takes pushes and lands through a PR where it requires a merge queue, slice 989).
+
 SHIP COVERS ITS OWN STAGING DEPLOY (owner, 2026-10-20). A skill may declare
 `release-follow-on: deploy-tag`: its approval then also covers ONE deploy-* tag on
 exactly the commit its own release produced, once that release took effect (the
-PR's merge commit for /ship; for /quickship the commit `git push origin main`
-reported, accepted only while it is on origin's main). Only the bare
+PR's merge commit for /ship, and for /quickship in a merge-queue repo; for a direct
+/quickship the commit `git push origin main` reported, accepted only while it is on
+origin's main). Only the bare
 `git push origin <tag>` qualifies, and the local tag's commit must be that commit:
 a `src:dst` refspec pushes its source, whatever the local tag says. A tag on another commit, a
 second tag, a promote/release/hotfix, all still need their own approval. /merge
@@ -405,12 +420,22 @@ def _frontmatter_list(skill_md: str, key: str) -> tuple[str, ...]:
         return ()
     raw = raw.strip("[]")
     return tuple(sorted({
-        v.strip().strip("'\"") for v in re.split(r"[,\s]+", raw) if v.strip().strip("'\"")
+        v.strip().strip("'\"") for v in re.split(r"[,|\s]+", raw) if v.strip().strip("'\"")
     }))
 
 
 def read_release_actions(skill_md: str) -> tuple[str, ...]:
     return _frontmatter_list(skill_md, "release-actions")
+
+
+def read_release_one_of(skill_md: str) -> tuple[str, ...]:
+    """`release-actions: push-main | merge`: the approval covers ONE effect of ANY of
+    them, not one of each (commas: one of each, `dispatch, merge` on /hotfix). /quickship
+    pushes to main where the branch takes pushes and lands through a PR where the
+    branch requires a merge queue (slice 989); either way it is one release. Returns
+    the actions when they are alternatives, else ()."""
+    raw = _frontmatter_value(skill_md, "release-actions") or ""
+    return read_release_actions(skill_md) if "|" in raw else ()
 
 
 def read_release_follow_on(skill_md: str) -> tuple[str, ...]:
@@ -474,6 +499,9 @@ class SkillResolver:
 
     def follow_on(self, name: str) -> tuple[str, ...]:
         return self._read(name, read_release_follow_on, "follow-on")
+
+    def one_of(self, name: str) -> tuple[str, ...]:
+        return self._read(name, read_release_one_of, "one-of")
 
 
 # --------------------------------------------------------------------------
@@ -2004,6 +2032,15 @@ class PrState(NamedTuple):
     state: str
     merge_sha: str | None
     url: str | None
+    # OPEN and still on its way to merging: in the merge queue, or auto-merge enabled
+    # (a queued landing waits for its own check, or an `--auto` merge waits).
+    pending: bool = False
+
+
+# Whether an OPEN PR without auto-merge sits in the merge queue: `gh pr view --json`
+# has `autoMergeRequest` but not `isInMergeQueue` (gh v2.102.1), so GraphQL is asked.
+_IN_QUEUE_QUERY = ("query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name)"
+                   "{pullRequest(number:$number){isInMergeQueue}}}")
 
 
 class Produced(NamedTuple):
@@ -2088,7 +2125,8 @@ class World:
         path = _repo_path(repo)
         if path is None:
             return None
-        out = self._call(["gh", "pr", "view", ref, "--json", "state,mergeCommit,url", "-R", path])
+        out = self._call(["gh", "pr", "view", ref, "--json", "state,mergeCommit,url,autoMergeRequest,number",
+                          "-R", path])
         if out is None or out[0] != 0:
             return None
         try:
@@ -2097,7 +2135,28 @@ class World:
             return None
         if not isinstance(data, dict) or not data.get("state"):
             return None
-        return PrState(str(data["state"]).upper(), (data.get("mergeCommit") or {}).get("oid"), data.get("url"))
+        state = str(data["state"]).upper()
+        pending = data.get("autoMergeRequest") is not None
+        if state == "OPEN" and not pending:
+            # Only an OPEN PR without auto-merge needs the second read; an unreadable
+            # answer makes the whole state unknown, which charges (fail closed).
+            queued = self._in_merge_queue(path, data.get("number"))
+            if queued is None:
+                return None
+            pending = queued
+        return PrState(state, (data.get("mergeCommit") or {}).get("oid"), data.get("url"), pending)
+
+    def _in_merge_queue(self, path: str, number) -> bool | None:
+        if not isinstance(number, int):
+            return None
+        owner, name = path.split("/", 1)
+        out = self._call(["gh", "api", "graphql", "-f", f"query={_IN_QUEUE_QUERY}", "-f", f"owner={owner}",
+                          "-f", f"name={name}", "-F", f"number={number}",
+                          "--jq", ".data.repository.pullRequest.isInMergeQueue"])
+        if out is None or out[0] != 0:
+            return None
+        answer = out[1].strip()
+        return True if answer == "true" else False if answer == "false" else None
 
     @property
     def standing(self) -> frozenset[str]:
@@ -2403,14 +2462,28 @@ def _pushed_main_commit(output: str) -> str | None:
 # The ledger: what the user approved, and which effects used it.
 # --------------------------------------------------------------------------
 
+class _Left(Counter):
+    """What an approval still covers, per action. Actions declared as alternatives
+    (`read_release_one_of`) share one count: spending one spends them all."""
+
+    def __init__(self, actions: tuple[str, ...], one_of: tuple[str, ...] = ()):
+        super().__init__({a: 1 for a in actions})
+        self._group = frozenset(one_of)
+
+    def __setitem__(self, action: str, value: int) -> None:
+        for a in (self._group if action in getattr(self, "_group", ()) else (action,)):
+            super().__setitem__(a, value)
+
+
 class Authorization:
     """One approval: a typed release skill, or one name of a typed /approve. It
     covers one effect of each action its skill declares, and for a skill with a
     follow-on, one more effect of that action on a commit its own release produced."""
 
-    def __init__(self, skill: str, actions: tuple[str, ...], follow_on: tuple[str, ...]):
+    def __init__(self, skill: str, actions: tuple[str, ...], follow_on: tuple[str, ...],
+                 one_of: tuple[str, ...] = ()):
         self.skill = skill
-        self.left = Counter({a: 1 for a in actions})
+        self.left = _Left(actions, one_of)
         self.follow_left = Counter({a: 1 for a in follow_on})
         self.produced: list[Produced] = []
 
@@ -2431,12 +2504,13 @@ REVIEW_APPROVAL = "github-review"
 
 class Ledger:
     def __init__(self, actions_of=lambda _name: (), follow_on_of=lambda _name: (),
-                 world: World | None = None):
+                 world: World | None = None, one_of_of=lambda _name: ()):
         self.auths: list[Authorization] = []
         self.active: str | None = None  # the release skill this session runs now
         self.last_approve_args: list[str] = []
         self._actions_of = actions_of
         self._follow_on_of = follow_on_of
+        self._one_of_of = one_of_of
         self.world = world or World()
         # Round-10 review: every key names its repository (`repo_of`), so one tag
         # name, PR number or run id in two repositories is two effects / credits.
@@ -2476,7 +2550,8 @@ class Ledger:
             # is a sentence, and approves nothing (`--status` names the stray words).
             if names and all(self._actions_of(n) for n in names):
                 for n in names:
-                    self.auths.append(Authorization(n, self._actions_of(n), self._follow_on_of(n)))
+                    self.auths.append(Authorization(n, self._actions_of(n), self._follow_on_of(n),
+                                                    self._one_of_of(n)))
             return
         actions = self._actions_of(name)
         if not actions:
@@ -2485,7 +2560,7 @@ class Ledger:
         # The user running the skill continues its open approval (the typed run
         # uses it); otherwise the typed line is the approval of this run.
         if not any(a.skill == b and a.open() for a in self.auths):
-            self.auths.append(Authorization(b, actions, self._follow_on_of(name)))
+            self.auths.append(Authorization(b, actions, self._follow_on_of(name), self._one_of_of(name)))
 
     def skill_invoked(self, name: str) -> None:
         if self._actions_of(name):
@@ -2563,9 +2638,13 @@ class Ledger:
         # repository could be MERGED and dedupe this one away (round 11).
         states = [self.world.pr_state(r["ref"], repo) if repo and _literal(r["ref"]) else None
                   for r, repo in zip(refs, repos)]
-        merged = [(s, r, repo) for s, r, repo in zip(states, refs, repos) if s and s.state == "MERGED"]
-        for s, r, repo in merged:
-            identity = s.url or s.merge_sha or str(r["ref"])
+        # MERGED: the effect. OPEN and pending (in the merge queue, or auto-merge on):
+        # the effect is on its way, so it holds the approval and no other PR rides it.
+        took = [(s, r, repo) for s, r, repo in zip(states, refs, repos)
+                if s and (s.state == "MERGED" or (s.state == "OPEN" and s.pending))]
+        for s, r, repo in took:
+            merged = s.state == "MERGED"
+            identity = s.url or (s.merge_sha if merged else None) or str(r["ref"])
             if (repo and ("merge", repo, identity) not in self._effects
                     and not any(a.left["merge"] > 0 for a in self.auths)):
                 # No typed approval paid for it: the owner's review on GitHub did, when
@@ -2575,12 +2654,17 @@ class Ledger:
                 if review is not None and review.approved:
                     self.auths.append(Authorization(REVIEW_APPROVAL, ("merge",), self._follow_on_of("ship")))
             self.charge("merge", identity=identity, repo=repo,
-                        produced=Produced(s.merge_sha, _first_dir(r["dir"]), True, repo) if s.merge_sha else None)
-        if merged:
+                        produced=Produced(s.merge_sha, _first_dir(r["dir"]), True, repo)
+                        if merged and s.merge_sha else None)
+        if took:
             return
+        # Every PR it names is observably neither merged nor on its way (a direct merge
+        # GitHub refused, an enqueue the queue later removed, a PR closed unmerged):
+        # nothing took effect, whatever the exit code said. A command still running may
+        # yet enqueue, and one whose PR cannot be named or read is charged.
         nothing_happened = (
-            outcome in ("failed", "stopped") and refs
-            and all(_literal(r["ref"]) and not r["auto"] for r in refs)
+            outcome != "pending" and refs
+            and all(_literal(r["ref"]) for r in refs)
             and all(s is not None for s in states)
         )
         if not nothing_happened:
@@ -2700,7 +2784,7 @@ class Ledger:
 def build_ledger(transcript_path: str, current_tool_use_id: str | None,
                  resolver: SkillResolver, scope: RepoScope | None = None,
                  world: World | None = None) -> Ledger:
-    ledger = Ledger(resolver.actions, resolver.follow_on, world)
+    ledger = Ledger(resolver.actions, resolver.follow_on, world, resolver.one_of)
     scope = scope or release_scope(resolver.cwd)
     pending: dict[str, tuple] = {}
     # Release commands started with `run_in_background`, waiting for their notice.

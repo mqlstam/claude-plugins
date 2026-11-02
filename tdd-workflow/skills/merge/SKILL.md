@@ -1,6 +1,6 @@
 ---
 name: merge
-description: Squash-merge a PR directly into main. Runs when the user types /merge, after /approve merge (one run), or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md).
+description: Squash-merge a PR into main, directly or through GitHub's merge queue where main requires one. Runs when the user types /merge, after /approve merge (one run), or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md).
 release-actions: merge
 argument-hint: "[PR number or branch name]"
 ---
@@ -19,7 +19,9 @@ Never rewrite history or force-push.
 Read main's newest `endoxia/main-health` status with
 `gh api repos/:owner/:repo/commits/main/statuses --jq '[.[] | select(.context == "endoxia/main-health")][0] // null'`.
 Print a red and whether this PR fixes it. A red main never blocks a ship or this merge; main CI checks the merged
-range and promote gates production. Report missing or pending health too.
+range and promote gates production. Report missing or pending health too. Through a
+merge queue a merge can no longer turn main red by a semantic conflict with another
+PR: the queue proves the merge result before main moves.
 
 ## Process
 
@@ -65,6 +67,11 @@ range and promote gates production. Report missing or pending health too.
    inspecting the new remote head and validating the integrated tree; never force
    the push. Keep this PR; do not create another one.
 
+   **Which landing path.** `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py mode`
+   reads main's active rules: `0` `merge_queue=required` → "Through the merge
+   queue" below replaces steps 2 to 4; `1` `merge_queue=none` → steps 2 to 4 as
+   they stand; `2` → GitHub could not be read: report it and STOP, never guess.
+
 2. **Wait for GitHub to settle its mergeability**, in the background
    (`run_in_background: true`), and act on the completion notification:
    `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py <PR> --head <SHA>`.
@@ -104,6 +111,38 @@ range and promote gates production. Report missing or pending health too.
    `gh api -X DELETE repos/:owner/:repo/git/refs/heads/<BRANCH>`. Never `main` or
    `master`. A 422 "Reference does not exist" means the repository already deleted
    it ("Automatically delete head branches").
+
+## Through the merge queue
+
+Where main requires GitHub's merge queue, the queue builds the PR on top of main
+and the PRs ahead of it and moves main only once the required checks pass on that
+result. Main moving is never a reason to integrate; conflicts are. The full
+contract, with each exit, is /ship's "Land through the merge queue"
+(`${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md`); for /merge:
+
+a. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py <PR> --head <SHA> --queue`,
+   in the background. `0` (`CLEAN` / `HAS_HOOKS` / `BEHIND`) → (b). `3` `DIRTY` →
+   conflicts: prepare the PR as step 1 says, then wait again. `4` `BLOCKED` at the
+   bound → the PR's own required check or a review is missing (`gh pr checks <PR>`):
+   a check still running, wait again; otherwise STOP and report. `5`, `6`, `7` → as
+   in step 2.
+b. `gh pr merge <PR> --squash --match-head-commit <SHA>`: on a queue branch gh adds
+   the PR to the queue (`will be added to the merge queue for main when ready`, or
+   `is already queued to merge`); any other output is a failed enqueue.
+c. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py await <PR> --head <SHA> --slice-min 9`
+   in the foreground (Bash `timeout` 600000). `6` → the same command again with the
+   `--until <E>` it printed. `0` `merged=<M>` → the verdict as step 4 reads it, then
+   step 5. `3` `removed` → name the failing merge-group run it prints and STOP: the
+   approval is unspent, and a fix lands under it. `4` `head_moved` → first
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py dequeue <PR>` (its auto-merge
+   may still be on and the unreviewed head could enter the queue; a `dequeue` exit
+   `2` is run again once, and a second one is reported first: the unreviewed head
+   may still land), then STOP and report the unreviewed head. `5` → report the state and position it names, and
+   STOP. `2` → GitHub could not be read: the same command again (with its
+   `--until <E>`, if any); a second `2` → report it and STOP.
+
+Never push to a branch while its PR is queued: first
+`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py dequeue <PR>`.
 
 ## Local cleanup
 

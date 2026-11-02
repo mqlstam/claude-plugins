@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Wait until GitHub has settled a PR's mergeability for the commit just pushed.
 
-    python3 wait-mergeable.py <pr> --head <sha> [--repo owner/name]
+    python3 wait-mergeable.py <pr> --head <sha> [--repo owner/name] [--queue]
 
 Run it with `run_in_background: true` and act on the completion notification.
+`--queue` when the base branch requires a merge queue (`merge-queue.py mode` exit 0).
 
 Why: GitHub recomputes mergeability in the background after every push. Until it
 has, `mergeStateStatus` reads UNKNOWN, or still describes the PREVIOUS head, and a
@@ -22,6 +23,14 @@ Exit status and the last line printed (`merge_state=<STATE> head=<sha>`):
      failing or still pending. Name it (`gh pr checks <pr>`) when you merge.
   7  the PR is no longer open (merged or closed): read `gh pr view`.
   2  usage, or `gh` could not be run.
+
+With `--queue` the queue, not this PR, builds on main, so two states change:
+  0  also BEHIND: the queue tests this PR on top of current main; bringing the
+     branch up to date would only make a new head (and cost a GitHub approval).
+  4  BLOCKED only at the bound: until the PR's own required check has passed it reads
+     BLOCKED, and enabling auto-merge then can be refused (GitHub regression, community
+     #190610, 2026-03), so it is polled until CLEAN. At the bound, read `gh pr checks`.
+  3  DIRTY only: conflicts, which the queue cannot build.
 """
 from __future__ import annotations
 
@@ -46,6 +55,8 @@ DEADLINE_S = 180
 POLL_S = 5
 
 SETTLED = {"CLEAN": 0, "HAS_HOOKS": 0, "DIRTY": 3, "BEHIND": 3, "BLOCKED": 4}
+# A queued landing: BEHIND is fine, BLOCKED is not final (a required check may be pending).
+SETTLED_QUEUE = {"CLEAN": 0, "HAS_HOOKS": 0, "BEHIND": 0, "DIRTY": 3}
 
 
 def read(pr: str, repo: str | None) -> dict | None:
@@ -65,8 +76,9 @@ def read(pr: str, repo: str | None) -> dict | None:
 
 
 def wait(pr: str, head: str, repo: str | None, deadline_s: float, poll_s: float,
-         clock=time.monotonic, sleep=time.sleep) -> tuple[int, str]:
+         clock=time.monotonic, sleep=time.sleep, queue: bool = False) -> tuple[int, str]:
     end = clock() + deadline_s
+    settled = SETTLED_QUEUE if queue else SETTLED
     last = "UNKNOWN"
     last_head = "-"
     while True:
@@ -77,11 +89,14 @@ def wait(pr: str, head: str, repo: str | None, deadline_s: float, poll_s: float,
                 return 7, f"pr_state={view.get('state')} head={last_head}"
             if last_head.startswith(head) or head.startswith(last_head):
                 last = str(view.get("mergeStateStatus") or "UNKNOWN")
-                if last in SETTLED:
-                    return SETTLED[last], f"merge_state={last} head={last_head}"
+                if last in settled:
+                    return settled[last], f"merge_state={last} head={last_head}"
         if clock() >= end:
             if last == "UNSTABLE":
                 return 6, f"merge_state=UNSTABLE head={last_head}"
+            if queue and last == "BLOCKED":
+                return 4, (f"merge_state=BLOCKED head={last_head} after={deadline_s:g}s: a required "
+                           "check or review is still missing; read `gh pr checks`")
             return 5, (f"merge_state_wait_deadline merge_state={last} head={last_head} "
                        f"after={deadline_s:g}s (expected head {head})")
         sleep(poll_s)
@@ -94,8 +109,10 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--repo")
     ap.add_argument("--deadline-s", type=float, default=DEADLINE_S)
     ap.add_argument("--poll-s", type=float, default=POLL_S)
+    ap.add_argument("--queue", action="store_true",
+                    help="the base branch lands through a merge queue (merge-queue.py mode)")
     args = ap.parse_args(argv)
-    code, line = wait(args.pr, args.head, args.repo, args.deadline_s, args.poll_s)
+    code, line = wait(args.pr, args.head, args.repo, args.deadline_s, args.poll_s, queue=args.queue)
     print(line, flush=True)
     return code
 

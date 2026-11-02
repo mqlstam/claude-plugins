@@ -80,7 +80,7 @@ class LandsExactlyTheReviewedHeadTest(unittest.TestCase):
         self.assertLess(land.index("gh pr view --json number,state,headRefOid"), land.index(covers))
         self.assertIn("Never land a head the owner has not been shown.", words(land))
         self.assertIn("open-for-review.md", land)
-        self.assertIn("STOP", land[land.index(covers):land.index("4. **Wait")])
+        self.assertIn("STOP", land[land.index(covers):land.index("4. **Which landing path")])
 
     def test_after_a_github_approval_a_new_head_needs_the_owner_again(self):
         land = words(skill("ship"))
@@ -133,7 +133,7 @@ class LandsExactlyTheReviewedHeadTest(unittest.TestCase):
 
     def test_version(self):
         manifest = json.loads(read(os.path.join(ROOT, ".claude-plugin", "plugin.json")))
-        self.assertEqual(manifest["version"], "1.10.0")
+        self.assertEqual(manifest["version"], "1.11.0")
 
 
 class AppSetupDocTest(unittest.TestCase):
