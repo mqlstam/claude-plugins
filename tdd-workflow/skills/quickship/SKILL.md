@@ -1,10 +1,10 @@
 ---
 name: quickship
-description: Validate, commit, merge origin/main and push directly to main without a PR, then deploy the pushed commit to staging. Runs when the user types /quickship, after /approve quickship, or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md); that one approval covers the push and the staging deploy of what it pushed.
-release-actions: push-main
+description: Validate, commit, merge origin/main and push directly to main without a review PR (where main requires GitHub's merge queue, through a PR the queue lands), then deploy the landed commit to staging. Runs when the user types /quickship, after /approve quickship, or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md); that one approval covers the landing and the staging deploy of what it landed.
+release-actions: push-main | merge
 release-follow-on: deploy-tag
 argument-hint: "[commit message]"
-allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(date *), Bash(curl *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py *)
+allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(date *), Bash(curl *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py *)
 ---
 
 # Quick Ship
@@ -17,14 +17,20 @@ allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *),
 - Worktrees: !`git worktree list --porcelain`
 
 **The approval.** This run's approval (the typed `/quickship`, or
-`/approve quickship`) is spent by the push landing on `main`, never by invoking
-this skill or by a push that was rejected: retry in this session without asking
-again. It covers ONE push to `main` and then ONE staging deploy tag on exactly the
-commit that push put there (step 8). Production (`/promote`, `/release`,
-`/hotfix`) needs its own approval.
+`/approve quickship`) is spent by the landing taking effect, never by invoking
+this skill, by a push that was rejected or by a PR the merge queue removed: retry
+in this session without asking again. It covers ONE landing, a push to `main` OR
+one merge of its own PR through the merge queue, and then ONE staging deploy tag on
+exactly the commit that landing put on main (step 8). Production (`/promote`,
+`/release`, `/hotfix`) needs its own approval.
 
 1. **Only main, in the primary checkout.** Otherwise STOP and use /ship from the
    feature branch. Never switch branches in a shared tree. If nothing changed, STOP.
+   **Which landing path:** `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py mode`.
+   `1` `merge_queue=none` → push to main (step 7). `0` `merge_queue=required` →
+   GitHub refuses every push to main (`GH013 … Changes must be made through the
+   merge queue`), so step 7 lands through a PR instead. `2` → GitHub could not be
+   read: report it and STOP, never guess.
 2. **VERIFY before changing HEAD.** `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py check` must exit 0: the READY
    verdict in `.claude/.verify-state.json` covers exactly the current contents.
    Otherwise complete VERIFY first, or review the changed paths it names.
@@ -53,14 +59,34 @@ commit that push put there (step 8). Production (`/promote`, `/release`,
    Background calls that can exceed about 8 minutes and wait for notification.
 6. **Report main health.** Read the newest `endoxia/main-health` status on origin's
    main tip; print red, pending or missing status and whether this change fixes a
-   red. A red main does not block this push.
+   red. A red main does not block this push. Through a merge queue a landing can no
+   longer turn main red by a semantic conflict: the queue proves the merge result
+   before main moves.
 7. **Push.** Before every push, `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py check --commit HEAD` must exit 0, so
-   nothing a hook or a later commit added goes out unreviewed. Then `git push origin main`,
-   alone and unredirected: the release gate reads the commit it pushed from its
-   `<old>..<new>  main -> main` line. A non-fast-forward rejection means main
-   moved: fetch, merge, `integrate` and validate again, then retry. Confirm the
-   pushed commit `<P>` (`git rev-parse HEAD`, the `<new>` of that line).
-8. **Deploy what you pushed to staging, under this same approval.** First, whether
+   nothing a hook or a later commit added goes out unreviewed.
+   - **Direct** (`merge_queue=none`): `git push origin main`,
+     alone and unredirected: the release gate reads the commit it pushed from its
+     `<old>..<new>  main -> main` line. A non-fast-forward rejection means main
+     moved: fetch, merge, `integrate` and validate again, then retry. Confirm the
+     pushed commit `<P>` (`git rev-parse HEAD`, the `<new>` of that line).
+   - **Through the merge queue** (`merge_queue=required`): `<C>` is
+     `git rev-parse HEAD`, `<S>` its first 12 characters. Push it to a branch of
+     its own, `git push origin HEAD:refs/heads/quickship/<S>` (not a release: the
+     approval is spent by the merge), then open the PR
+     `gh pr create --base main --head quickship/<S> --title "<the commit's conventional subject>" --body "Landed by /quickship through the merge queue."`
+     and take `<PR>` from the URL it prints. Then land it exactly as /ship's "Land
+     through the merge queue" (a) to (c) says (`${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md`),
+     with `<SHA>` = `<C>`: `wait-mergeable.py <PR> --head <C> --queue`, then
+     `gh pr merge <PR> --squash --match-head-commit <C>`, then
+     `merge-queue.py await <PR> --head <C> --slice-min 9` in foreground slices.
+     `merged=<M>` → `<P>` is `<M>`, the squash commit the queue put on main; delete
+     the branch (`gh api -X DELETE repos/:owner/:repo/git/refs/heads/quickship/<S>`,
+     a 422 means it is already gone). `removed` → name the failing merge-group run;
+     a fix is a new commit, checked and pushed to the same branch after
+     `merge-queue.py dequeue <PR>`, landed under this same unspent approval. Local
+     main keeps the commits the queue squashed; the next integration merges
+     origin/main in without changing a file for them. Never reset or rewrite it.
+8. **Deploy what you landed to staging, under this same approval.** First, whether
    the project deploys at all: `gh api repos/:owner/:repo/actions/workflows/deploy.yml --jq .state`.
    A 404 (no such workflow) means there is no staging deploy here: say so in one
    line and stop. Otherwise read `${CLAUDE_PLUGIN_ROOT}/skills/deploy/SKILL.md` and

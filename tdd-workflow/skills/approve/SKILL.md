@@ -34,15 +34,17 @@ What it allows:
 - **The approval is spent only by its effect:** the PR is MERGED, the deploy tag
   is on origin, the push landed on main, the workflow run was created. Invoking
   the skill spends nothing, and neither does a command that was refused, or that
-  failed with proof it took no effect (the PR is open, the tag is not on origin,
-  git reported the push rejected, GitHub shows no run): retry in this session
-  without a new approval. A command that succeeded, one still running, or one
-  whose effect cannot be ruled out counts as spent.
+  failed with proof it took no effect (the tag is not on origin, git reported the
+  push rejected, GitHub shows no run): retry in this session without a new
+  approval. A merge follows its PR: MERGED, or still in the merge queue or waiting
+  on auto-merge, is spent; open with neither (it failed, or the queue removed it)
+  or closed unmerged is not. A command still running, or one whose effect cannot
+  be ruled out, counts as spent.
 - One release command per Bash call: a call that can merge twice, push two tags
   or dispatch twice is refused before it runs.
 - **`ship` and `quickship` also cover the staging deploy of what they released:**
   one `deploy-*` tag on exactly the merge commit (ship) or the pushed commit
-  (quickship), pushed as `git push origin deploy-<TS>`. `merge` does not; `/approve merge deploy` covers both. Production
+  (quickship; its merge commit where main requires a merge queue), pushed as `git push origin deploy-<TS>`. `merge` does not; `/approve merge deploy` covers both. Production
   (`promote`, `release`, `hotfix`) always needs its own approval.
 - A release that ran may re-run the failed jobs of the run it started once,
   `gh run rerun <id> --failed`, without a new approval (a deploy whose run failed

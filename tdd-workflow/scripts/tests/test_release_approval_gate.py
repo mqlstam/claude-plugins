@@ -18,7 +18,7 @@ os.environ[gate.STANDING_ENV] = os.path.join(HERE, "no-such-standing-approval.js
 
 ACTIONS = {
     "ship": ("merge",),
-    "quickship": ("push-main",),
+    "quickship": ("merge", "push-main"),
     "merge": ("merge",),
     "deploy": ("deploy-tag",),
     "promote": ("dispatch",),
@@ -26,6 +26,8 @@ ACTIONS = {
     "hotfix": ("dispatch", "merge"),
 }
 FOLLOW_ON = {"ship": ("deploy-tag",), "quickship": ("deploy-tag",)}
+# `release-actions: push-main | merge`: one effect of either (slice 989).
+ONE_OF = {"quickship": ("merge", "push-main")}
 STAMP = "2026-10-20T12:00:00.000Z"  # when each recorded tool call was made
 ATTEMPT = gate._epoch(STAMP)
 
@@ -39,6 +41,9 @@ class FakeResolver(gate.SkillResolver):
 
     def follow_on(self, name):
         return FOLLOW_ON.get(gate.bare(name), ())
+
+    def one_of(self, name):
+        return ONE_OF.get(gate.bare(name), ())
 
 
 class FakeWorld(gate.World):
@@ -69,8 +74,10 @@ class FakeWorld(gate.World):
         self.asked.append(("pr-repo", ref, repo))
         if ref in self.prs and self.prs[ref] is None:
             return None
-        state, sha = self.prs.get(ref, ("OPEN", None))
-        return gate.PrState(state, sha, f"https://github.com/o/r/pull/{ref}")
+        # ("OPEN", None, True): queued or auto-merge on (pending); the default is
+        # nothing pending.
+        state, sha, *pending = self.prs.get(ref, ("OPEN", None))
+        return gate.PrState(state, sha, f"https://github.com/o/r/pull/{ref}", bool(pending and pending[0]))
 
     def remote_tag(self, tag, repo_dir, remote="origin"):
         self.asked.append(("tag", tag))
@@ -107,6 +114,12 @@ class FakeWorld(gate.World):
 
     def run_info(self, run_id, repo):
         return self._run_info(run_id, None, repo)
+
+
+def merged(*refs):
+    """GitHub after a direct merge that succeeded: each PR is MERGED (slice 989: an
+    exit 0 alone is no effect, since a queue repo's `gh pr merge` only enqueues)."""
+    return FakeWorld(prs={ref: ("MERGED", "c" * 39 + str(i)) for i, ref in enumerate(refs)})
 
 
 def on_branch(name):
@@ -386,14 +399,14 @@ class SkillArmTest(unittest.TestCase):
         self.assertIsNone(skill_decision(t, "claude-tdd-workflow:ship"),
                           "invoking the skill spends nothing; only its merge does")
         t.bash("gh pr merge 12 --squash")
-        self.assertIsNotNone(skill_decision(t, "claude-tdd-workflow:ship"))
-        self.assertIsNone(skill_decision(t, "claude-tdd-workflow:deploy"))
+        self.assertIsNotNone(skill_decision(t, "claude-tdd-workflow:ship", world=merged("12")))
+        self.assertIsNone(skill_decision(t, "claude-tdd-workflow:deploy", world=merged("12")))
 
     def test_a_prompt_written_twice_is_one_approval(self):
         t = Transcript().typed("approve", "merge", duplicated=True)
         t.skill("claude-tdd-workflow:merge")
         t.bash("gh pr merge 12 --squash")
-        self.assertIsNotNone(skill_decision(t, "claude-tdd-workflow:merge"),
+        self.assertIsNotNone(skill_decision(t, "claude-tdd-workflow:merge", world=merged("12")),
                              "one typed /approve must allow one merge, however often it was written down")
 
     def test_typing_it_twice_is_two_approvals(self):
@@ -405,7 +418,7 @@ class SkillArmTest(unittest.TestCase):
     def test_a_duplicated_typed_skill_grants_its_action_once(self):
         t = Transcript().typed("claude-tdd-workflow:ship", duplicated=True)
         t.bash("gh pr merge 12 --squash")
-        self.assertIsNotNone(bash_decision(t, "gh pr merge 13 --squash"))
+        self.assertIsNotNone(bash_decision(t, "gh pr merge 13 --squash", world=merged("12")))
 
     def test_refused_or_failed_invocation_does_not_use_the_approval(self):
         t = Transcript().typed("approve", "ship")
@@ -420,8 +433,8 @@ class SkillArmTest(unittest.TestCase):
         # The typed run continues the open approval instead of adding a second one.
         t = Transcript().typed("approve", "ship").typed("claude-tdd-workflow:ship").prose("thanks")
         t.bash("gh pr merge 12 --squash")
-        self.assertIsNotNone(skill_decision(t, "claude-tdd-workflow:ship"))
-        self.assertIsNotNone(bash_decision(t, "gh pr merge 13 --squash"))
+        self.assertIsNotNone(skill_decision(t, "claude-tdd-workflow:ship", world=merged("12")))
+        self.assertIsNotNone(bash_decision(t, "gh pr merge 13 --squash", world=merged("12")))
 
     def test_typed_before_the_approval_does_not_use_it(self):
         t = Transcript().typed("claude-tdd-workflow:ship").prose("ok").typed("approve", "ship")
@@ -476,7 +489,7 @@ class BashArmTest(unittest.TestCase):
     def test_one_activation_covers_one_successful_action(self):
         t = Transcript().typed("claude-tdd-workflow:ship")
         t.bash("gh pr merge 12 --squash")
-        self.assertIsNotNone(bash_decision(t, "gh pr merge 13 --squash"))
+        self.assertIsNotNone(bash_decision(t, "gh pr merge 13 --squash", world=merged("12")))
 
     def test_failed_action_can_be_retried(self):
         t = Transcript().typed("claude-tdd-workflow:ship")
@@ -516,7 +529,7 @@ class BashArmTest(unittest.TestCase):
         t = Transcript().typed("claude-tdd-workflow:ship")
         t.skill("claude-tdd-workflow:ship")
         t.bash("gh pr merge 12 --squash")
-        self.assertIsNotNone(bash_decision(t, "gh pr merge 13 --squash"))
+        self.assertIsNotNone(bash_decision(t, "gh pr merge 13 --squash", world=merged("12")))
 
     def test_action_without_a_recorded_result_counts_as_used(self):
         t = Transcript().typed("claude-tdd-workflow:ship")
@@ -714,7 +727,10 @@ class BackgroundReleaseTest(unittest.TestCase):
         self.assertIsNone(bash_decision(t, "gh pr merge 12 --squash --match-head-commit abc"))
         t, tid = self.released_in_background()
         t.notify(tid, "completed", 0)
-        self.assertIsNotNone(bash_decision(t, "gh pr merge 12 --squash"))
+        self.assertIsNotNone(bash_decision(t, "gh pr merge 13 --squash", world=merged("12")))
+        # A completed enqueue (merge queue) is on its way: it holds the approval too.
+        self.assertIsNotNone(bash_decision(t, "gh pr merge 13 --squash",
+                                           world=FakeWorld(prs={"12": ("OPEN", None, True)})))
 
 
     def test_parse_task_notification(self):
@@ -733,13 +749,24 @@ class FrontmatterTest(unittest.TestCase):
             fh.write("---\nname: hotfix\nrelease-actions: dispatch, merge\n---\n# body\nrelease-actions: x\n")
         try:
             self.assertEqual(gate.read_release_actions(path), ("dispatch", "merge"))
+            self.assertEqual(gate.read_release_one_of(path), (), "commas: one of each")
+        finally:
+            os.unlink(path)
+        fd, path = tempfile.mkstemp(suffix=".md")
+        with os.fdopen(fd, "w") as fh:
+            fh.write("---\nname: quickship\nrelease-actions: push-main | merge\n---\n")
+        try:
+            self.assertEqual(gate.read_release_actions(path), ("merge", "push-main"))
+            self.assertEqual(gate.read_release_one_of(path), ("merge", "push-main"), "`|`: one of them")
         finally:
             os.unlink(path)
 
     def test_shipped_skills_declare_what_they_do(self):
         root = os.path.dirname(os.path.dirname(HERE))
+        self.assertEqual(gate.read_release_one_of(os.path.join(root, "skills", "quickship", "SKILL.md")),
+                         ("merge", "push-main"))
         for skill, expected, follow_on in (("ship", ("merge",), ("deploy-tag",)),
-                                           ("quickship", ("push-main",), ("deploy-tag",)),
+                                           ("quickship", ("merge", "push-main"), ("deploy-tag",)),
                                            ("merge", ("merge",), ()),
                                            ("deploy", ("deploy-tag",), ())):
             path = os.path.join(root, "skills", skill, "SKILL.md")
@@ -866,17 +893,44 @@ class EffectSpendingTest(unittest.TestCase):
         self.assertIn("deploy-tag", bash_decision(t, "git push origin deploy-1",
                                                   world=FakeWorld(remote_tags={"deploy-1": None})))
 
-    def test_a_merge_that_succeeded_is_charged_even_before_github_shows_it(self):
-        # A merge queue or `--auto` merges later: success holds the approval.
+    def test_a_pending_merge_holds_the_approval_and_one_that_left_the_queue_refunds_it(self):
+        # Slice 989: in a merge-queue repo `gh pr merge` succeeds by enqueueing, and the
+        # queue merges later or removes the PR. `--auto` is the same pending effect.
+        queued = FakeWorld(prs={"12": ("OPEN", None, True)})
+        removed = FakeWorld(prs={"12": ("OPEN", None, False)})
+        closed = FakeWorld(prs={"12": ("CLOSED", None)})
+        for cmd in ("gh pr merge 12 --squash --match-head-commit abc", "gh pr merge 12 --squash --auto"):
+            for error in (False, True):
+                t = Transcript().typed("approve", "merge")
+                t.bash(cmd, error=error, output="Exit code 1\nx" if error else "x")
+                self.assertIn("merge", bash_decision(t, "gh pr merge 13 --squash", world=queued),
+                              f"queued holds it: {cmd} error={error}")
+                self.assertIsNone(bash_decision(t, "gh pr merge 13 --squash", world=removed),
+                                  f"left the queue: {cmd} error={error}")
+                self.assertIsNone(bash_decision(t, "gh pr merge 13 --squash", world=closed),
+                                  f"closed unmerged: {cmd} error={error}")
+                self.assertIn("merge", bash_decision(t, "gh pr merge 13 --squash", world=merged("12")))
+        # A merge still running may yet enqueue: charged.
         t = Transcript().typed("approve", "merge")
-        t.bash("gh pr merge 12 --squash")
-        self.assertIn("merge", bash_decision(t, "gh pr merge 13 --squash"))
-        t = Transcript().typed("approve", "merge")
-        t.bash("gh pr merge 12 --squash --auto")
-        self.assertIn("merge", bash_decision(t, "gh pr merge 13 --squash"))
-        t = Transcript().typed("approve", "merge")
-        t.bash("gh pr merge 12 --squash --auto", error=True, output="Exit code 1\nx")
-        self.assertIn("merge", bash_decision(t, "gh pr merge 13 --squash"))
+        t.bash("gh pr merge 12 --squash", result=False)
+        self.assertIn("merge", bash_decision(t, "gh pr merge 13 --squash", world=removed))
+
+    def test_a_queued_merge_arms_the_follow_on_only_once_merged(self):
+        t = Transcript().typed("approve", "ship")
+        t.skill("claude-tdd-workflow:ship")
+        t.bash("gh pr merge 12 --squash --match-head-commit abc",
+               output="! The merge strategy for main is set by the merge queue\n"
+                      "✓ Pull request o/r#12 will be added to the merge queue for main when ready")
+        queued = FakeWorld(prs={"12": ("OPEN", None, True)}, local_tags={"deploy-1": M})
+        self.assertIn("deploy-tag", bash_decision(t, "git push origin deploy-1", world=queued))
+        self.assertIsNotNone(skill_decision(t, "claude-tdd-workflow:ship", world=queued), "spent while queued")
+        # The same command again (gh: "already queued") is the same effect, charged once.
+        t.bash("gh pr merge 12 --squash --match-head-commit abc")
+        landed = FakeWorld(prs={"12": ("MERGED", M)}, local_tags={"deploy-1": M})
+        self.assertIsNone(bash_decision(t, "git push origin deploy-1", world=landed))
+        # Removed from the queue: refunded, so the re-land of the fixed PR is covered.
+        removed = FakeWorld(prs={"12": ("OPEN", None, False)})
+        self.assertIsNone(bash_decision(t, "gh pr merge 12 --squash --match-head-commit def", world=removed))
 
     def test_a_background_merge_that_ended_without_a_verdict_is_judged_by_github(self):
         for status in ("killed", "stopped", "unknown"):
@@ -1005,6 +1059,28 @@ class ShipCoversItsStagingDeployTest(unittest.TestCase):
         self.assertIn("deploy-tag", bash_decision(t, "git push origin deploy-1",
                                                   world=self.world(local_tags={"deploy-1": M})))
 
+    def test_quickship_in_a_queue_repo_covers_one_merge_and_its_staging_tag(self):
+        # Slice 989: a queue repo refuses the push to main, so /quickship pushes a
+        # branch and lands it through a PR. One approval: one merge OR one push to main.
+        t = Transcript().typed("approve", "quickship")
+        t.skill("claude-tdd-workflow:quickship")
+        sha = "d" * 40
+        self.assertEqual(gate.classify(f"git push origin HEAD:refs/heads/quickship/{sha[:12]}", "/repo",
+                                       branch_of=on_branch("main")), set(), "the branch push is no release")
+        self.assertIsNone(bash_decision(t, "gh pr merge 12 --squash --match-head-commit " + sha, branch="main"))
+        t.bash("gh pr merge 12 --squash --match-head-commit " + sha, branch="main")
+        landed = FakeWorld(prs={"12": ("MERGED", M)}, local_tags={"deploy-1": M})
+        self.assertIsNone(bash_decision(t, "git push origin deploy-1", branch="main", world=landed),
+                          "the follow-on tag on the merge commit the queue landed")
+        self.assertIn("push-main", bash_decision(t, "git push origin main", branch="main", world=landed),
+                      "the merge spent the push too")
+        self.assertIn("merge", bash_decision(t, "gh pr merge 13 --squash", branch="main", world=landed))
+        # ... and the direct path still covers one push, after which no merge is left.
+        t = Transcript().typed("claude-tdd-workflow:quickship")
+        t.bash("git push origin main", branch="main", output=" a1b2c3d..e4f5a6b  main -> main")
+        self.assertIn("merge", bash_decision(t, "gh pr merge 13 --squash", branch="main"))
+        self.assertIn("push-main", bash_decision(t, "git push origin main", branch="main"))
+
     def test_the_follow_on_is_used_before_a_separate_deploy_approval(self):
         t = Transcript().typed("approve", "ship deploy")
         t.skill("claude-tdd-workflow:ship")
@@ -1128,9 +1204,10 @@ class TypedShapesTest(unittest.TestCase):
             self.assertIn(f"send `{line}` as a message of its own", bash_decision(t, cmd), cmd)
         t = Transcript().typed("claude-tdd-workflow:ship")
         t.bash("gh pr merge 12 --squash")
-        self.assertIn("send `/approve ship` as a message of its own", bash_decision(t, "gh pr merge 13 --squash"),
-                      "the skill this session runs")
-        self.assertIn("send `/approve ship` as a message of its own", skill_decision(t, "claude-tdd-workflow:ship"))
+        self.assertIn("send `/approve ship` as a message of its own",
+                      bash_decision(t, "gh pr merge 13 --squash", world=merged("12")), "the skill this session runs")
+        self.assertIn("send `/approve ship` as a message of its own",
+                      skill_decision(t, "claude-tdd-workflow:ship", world=merged("12")))
 
 
 class OneEffectPerCallTest(unittest.TestCase):
@@ -1539,6 +1616,28 @@ class WorldTest(unittest.TestCase):
         self.assertIsNone(world.pr_state("12", "o/r"))
         self.assertIsNone(gate.World(run=no_github).pr_state("12", None), "no repository: not asked")
 
+    def test_pr_state_reads_whether_the_merge_is_pending(self):
+        open_pr = {"state": "OPEN", "mergeCommit": None, "url": "u", "number": 12, "autoMergeRequest": None}
+        # Auto-merge on: pending, without a second read.
+        world, run = self.world((0, json.dumps({**open_pr, "autoMergeRequest": {"enabledAt": "t"}})))
+        self.assertEqual(world.pr_state("12", "o/r"), gate.PrState("OPEN", None, "u", True))
+        self.assertEqual(len(run.calls), 1)
+        self.assertIn("state,mergeCommit,url,autoMergeRequest,number", run.calls[0])
+        # No auto-merge: GraphQL says whether it sits in the merge queue.
+        for answer, pending in (("true", True), ("false", False)):
+            world, run = self.world((0, json.dumps(open_pr)), (0, answer + "\n"))
+            self.assertEqual(world.pr_state("12", "o/r"), gate.PrState("OPEN", None, "u", pending))
+            self.assertEqual(run.calls[1][:3], ["gh", "api", "graphql"])
+            self.assertIn("owner=o", run.calls[1])
+            self.assertIn("number=12", run.calls[1])
+        # The queue unreadable: the state is unknown (charged), never "not pending".
+        world, _ = self.world((0, json.dumps(open_pr)), (1, ""))
+        self.assertIsNone(world.pr_state("12", "o/r"))
+        # A merged PR needs no second read.
+        world, run = self.world((0, json.dumps({**open_pr, "state": "MERGED", "mergeCommit": {"oid": M}})))
+        self.assertEqual(world.pr_state("12", "o/r"), gate.PrState("MERGED", M, "u", False))
+        self.assertEqual(len(run.calls), 1)
+
     def test_on_main(self):
         for answer, expected in (("identical", True), ("ahead", True), ("diverged", False), ("", None)):
             world, _ = self.world((0, answer + "\n"))
@@ -1930,7 +2029,7 @@ class SessionScopeTest(unittest.TestCase):
         self.addCleanup(setattr, gate, "SCOPE_CONFIG", old)
         return repos
 
-    def decide(self, t, cmd, cwd, project_dir):
+    def decide(self, t, cmd, cwd, project_dir, world=None):
         path = t.write()
         env = dict(os.environ)
         if project_dir:
@@ -1943,7 +2042,7 @@ class SessionScopeTest(unittest.TestCase):
                 return gate.decide_bash(
                     {"tool_name": "Bash", "tool_input": {"command": cmd}, "transcript_path": path,
                      "tool_use_id": "toolu_now", "cwd": cwd},
-                    FakeResolver(), sleep=no_sleep, branch_of=on_branch("feature"), world=FakeWorld())
+                    FakeResolver(), sleep=no_sleep, branch_of=on_branch("feature"), world=world or FakeWorld())
         finally:
             os.unlink(path)
 
@@ -1960,7 +2059,8 @@ class SessionScopeTest(unittest.TestCase):
         repos = self.config_and_repos()
         t = Transcript().typed("approve", "merge")
         t.bash("gh pr merge 3 --squash -R mqlstam/EABOS")
-        reason = self.decide(t, "gh pr merge 4 --squash -R mqlstam/EABOS", repos["endoxia"], repos["endoxia"])
+        reason = self.decide(t, "gh pr merge 4 --squash -R mqlstam/EABOS", repos["endoxia"], repos["endoxia"],
+                             world=merged("3"))
         self.assertIn("Blocked", reason or "", "the EABOS merge used the approval")
         self.assertIsNone(self.decide(t, "gh pr merge 4 --squash -R mqlstam/EABOS", repos["eabos"], repos["eabos"]))
 

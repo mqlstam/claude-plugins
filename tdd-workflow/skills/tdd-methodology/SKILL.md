@@ -115,8 +115,8 @@ Reach for it before reaching for another grep-shaped gate.
 | `/feature <name> [--layers]`| New feature; single-agent build by default                     |
 | `/refactor <name> [--layers]`| Refactor; ANALYZE fans out, the build does not                |
 | `/ship`                     | Land the PR the owner reviewed: that exact head, then its staging deploy (VERIFY opens the PR with its evidence) |
-| `/quickship`                | Same local checks, push directly to main |
-| `/merge`                    | Squash-merge an existing PR directly |
+| `/quickship`                | Same local checks, push directly to main (through a PR and the merge queue where main requires one) |
+| `/merge`                    | Squash-merge an existing PR (directly, or through the merge queue) |
 | `/deploy`                   | Release main via a `deploy-*` tag — the only thing that deploys (Endoxia: to STAGING; production is `/promote`) |
 | `/spinup` / `/teardown`     | This worktree's private runnable stack                         |
 | `/validate`                 | Check slice completeness                                       |
@@ -131,7 +131,9 @@ then lands exactly the PR head that evidence was recorded for. Integration alone
 coverage with a reason, never remove the automatic floor.
 
 Each worktree runs independently. Push, open the PR and squash-merge directly,
-matching its exact head. Main's short CI checks the merged range; a red main is
+matching its exact head; where main requires GitHub's merge queue
+(`scripts/merge-queue.py mode`), the same merge command enqueues that head and the
+queue proves the merge result before main moves. Main's short CI checks the merged range; a red main is
 reported and fixed forward through an ordinary ship. It does not block ships.
 Staging refuses a known red SHA and warns on unknown health. Promote runs the
 whole suite on the exact production SHA, reusing a verified green when available.

@@ -1,10 +1,10 @@
 ---
 name: ship
-description: Land the pull request the owner reviewed - check it is exactly the reviewed work with that review's evidence, integrate main if GitHub needs it, squash-merge that PR head, then deploy the merge commit to staging and watch it to its verdict. Runs when the user types /ship, after /approve ship, when the owner approved the agent App's PR on GitHub, or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md); that one approval covers the merge and the staging deploy of what it merged. Opening the PR for review (phase 1) needs no approval and runs at the end of VERIFY.
+description: Land the pull request the owner reviewed - check it is exactly the reviewed work with that review's evidence, integrate main if GitHub needs it, squash-merge that PR head (through GitHub's merge queue where main requires one), then deploy the merge commit to staging and watch it to its verdict. Runs when the user types /ship, after /approve ship, when the owner approved the agent App's PR on GitHub, or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md); that one approval covers the merge and the staging deploy of what it merged. Opening the PR for review (phase 1) needs no approval and runs at the end of VERIFY.
 release-actions: merge
 release-follow-on: deploy-tag
 argument-hint: "[PR title]"
-allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(date *), Bash(curl *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent-github-token.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_app.py *)
+allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(date *), Bash(curl *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent-github-token.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_app.py *)
 ---
 
 # Ship
@@ -81,7 +81,14 @@ Do not merge on a wake alone: the gate decides from the review, and so do you.
      lands, and STOP: the owner watches it before it lands. Never land a head the
      owner has not been shown.
 
-4. **Wait for GitHub to settle the PR for `<SHA>`**, in the background. GitHub
+4. **Which landing path.** `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py mode`
+   reads main's active rules on GitHub:
+   - `0` `merge_queue=required` → land through the queue: "Land through the merge
+     queue" below replaces steps 4 to 6, then continue at (7).
+   - `1` `merge_queue=none` → land directly, steps 4 to 6 as they stand.
+   - `2` → GitHub could not be read: report it and STOP. Never guess a path.
+
+   **Direct: wait for GitHub to settle the PR for `<SHA>`**, in the background. GitHub
    recomputes mergeability after every push; a merge in that window was answered
    "merge conflicts" for a branch without any, and push-to-merge reached a p90 of
    26.6 min. With `run_in_background: true`:
@@ -177,10 +184,67 @@ Do not merge on a wake alone: the gate decides from the review, and so do you.
      setting), the thread may still leave the list: say so in the message, and that
      the release status names the open run.
 
+## Land through the merge queue
+
+Where main requires GitHub's merge queue (step 4 read `merge_queue=required`), the
+queue builds each PR on top of main and the PRs ahead of it, runs the required
+checks on that merge result, and moves main only when they pass. A PR whose base
+moved is not behind any more, so main moving is never a reason to integrate: that
+loop is what the queue retires. Same approval, same `<PR>` and `<SHA>`, same step 2
+and 3 checks, which already passed.
+
+a. **Settle**, in the background (`run_in_background: true`), acting on its
+   completion notification:
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py <PR> --head <SHA> --queue`.
+   - `0` `CLEAN` / `HAS_HOOKS` / `BEHIND` → enqueue (b).
+   - `3` `DIRTY` → conflicts, which the queue cannot build: "Integrate main" below,
+     push as open-for-review step 4 does, set `<SHA>`, `review-covers <PR>` again,
+     wait again; the GitHub-review rule of step 4 holds for that new head.
+   - `4` `BLOCKED` at the 180 s bound → the PR's own required check or a review is
+     missing (`gh pr checks <PR>`). A check still running: wait again. Otherwise
+     report it and STOP. GitHub refuses an enqueue until the PR's own requirements
+     pass (a known regression, community #190610), so never enqueue before CLEAN.
+   - `5`, `6`, `7` → as in step 4.
+
+b. **Enqueue:** `gh pr merge <PR> --squash --match-head-commit <SHA>`, the same
+   command as the direct merge: on a queue branch gh adds the PR to the queue
+   instead (no `--auto` needed; no `--delete-branch`, which gh refuses there). Its
+   output says `will be added to the merge queue for main when ready`, or
+   `is already queued to merge`; anything else is a failed enqueue, and the output
+   is the reason. `--match-head-commit` still binds it to the reviewed head.
+
+c. **Wait for the queue's verdict in the foreground**, in slices:
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py await <PR> --head <SHA> --slice-min 9`
+   with a Bash `timeout` of 600000. Its bound is derived from the queue: each group
+   ahead and this PR's own may run to the queue's check timeout once. Its last
+   line and exit:
+   - `0` `merged=<M>` → the queue landed it; `<M>` is the commit on main. Read the
+     verdict from the PR as step 6 says (`MERGED <M>`), delete the branch as step 6
+     says (usually already gone), then (7) with `<M>`.
+   - `6` `merge_queue_still_queued … --until <E>` → run the same command again
+     with `--until <E>`, until another exit.
+   - `3` `removed` → the PR left the queue without merging. It names the failing
+     merge-group run (`merge_group_run=<url>`): read it (`release-run.py reason
+     <run-id>`). When the failure is this PR's, fix it on the branch, VERIFY the
+     fix as VERIFY step 4 says, open for review again, and land again from (a)
+     under the same approval, which the removal did not spend. When it is not
+     this PR's (a flaky check, an infrastructure failure), report it and STOP. A
+     group that failed for ANOTHER queued PR is rebuilt by GitHub with this one
+     still queued: `await` keeps waiting then, it does not exit.
+   - `4` `head_moved` → someone pushed to the branch: STOP and report, as for an
+     unreviewed head.
+   - `5` `NOT MERGED` → report the entry's state and position it names, and STOP:
+     the PR is still queued and nothing is done.
+
+**Never push to a branch while its PR is queued**: a push evicts it from the queue
+(and a later merge would carry an unreviewed head). First
+`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py dequeue <PR>`, which takes it
+out and turns its auto-merge off; then push, and land again from (a).
+
 ## Integrate main
 
-Used by open for review (always) and by landing (when GitHub reports `DIRTY` or
-`BEHIND`). `git fetch origin main`, then
+Used by open for review (always) and by landing (directly: when GitHub reports
+`DIRTY` or `BEHIND`; through the merge queue: `DIRTY` only). `git fetch origin main`, then
 `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py adopt-squash`, then
 `git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main`.
 `adopt-squash` records this branch's own squash-merged PRs as merged, but only
@@ -229,7 +293,9 @@ Main's newest `endoxia/main-health` status:
 `gh api repos/:owner/:repo/commits/main/statuses --jq '[.[] | select(.context == "endoxia/main-health")][0] // null'`.
 A red main never blocks a ship: print the failing status and say whether this
 change fixes it. Missing or pending health is reported too; an API error means
-unknown health and does not block this ship.
+unknown health and does not block this ship. Through a merge queue a merge can no
+longer turn main red by a semantic conflict with another PR: the queue proves the
+merge result before main moves.
 
 ## After it lands
 
