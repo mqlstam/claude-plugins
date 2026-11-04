@@ -104,5 +104,7 @@ When entering a phase, read its detail file.
 5. **No backward compatibility** — delete old code, old exports, old types. No
    re-exports, no `_deprecated` prefixes, no `// removed` comments, no shims. Update
    ALL callers in the MIGRATE phase instead
-6. **Never `sleep`-poll a long command** — run it with `run_in_background: true` and
-   wait for the completion notification
+6. **Never `sleep`-poll a long command** — run it with `run_in_background: true`;
+   its completion wakes you, so carry the workflow on from it in that turn. Never end the turn waiting on something with no local task (a GitHub run, a
+   remote job): wrap that wait in a local background command that exits on its terminal
+   state (the plugin context's "A background step is yours" rule)

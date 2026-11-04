@@ -26,8 +26,8 @@ Practical shape:
    output names your files: a repository-root `vitest run <file>` can match no test
    and still exit 0. VERIFY's `ship:check` selects the rest; a whole package suite
    needs a stated reason (a test config or shared testing helper changed).
-   Anything longer than ~8 minutes goes through `run_in_background: true`; wait for
-   the completion notification rather than `sleep`-polling.
+   Anything longer than ~8 minutes goes through `run_in_background: true` rather than
+   `sleep`-polling; its completion wakes you, so carry the workflow on from it in that turn.
 
 ## `--layers` — the opt-in fan-out
 

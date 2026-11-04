@@ -93,7 +93,8 @@ Do not merge on a wake alone: the gate decides from the review, and so do you.
    "merge conflicts" for a branch without any, and push-to-merge reached a p90 of
    26.6 min. With `run_in_background: true`:
    `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py <PR> --head <SHA>`
-   and act on its completion notification (do not poll it, do not `sleep`). It
+   and act on its completion notification (do not poll it, do not `sleep`; its
+   completion wakes you even after the turn ended, so carry on from it). It
    counts a state only once `headRefOid` is `<SHA>`, and stops at 180 s (six of
    seven measured settles took at most 26 s). Its last line and exit:
    - `0` `CLEAN` / `HAS_HOOKS` → merge now (5), in the same minute.
@@ -194,7 +195,7 @@ loop is what the queue retires. Same approval, same `<PR>` and `<SHA>`, same ste
 and 3 checks, which already passed.
 
 a. **Settle**, in the background (`run_in_background: true`), acting on its
-   completion notification:
+   completion notification (its completion wakes you; carry on from it in that turn):
    `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py <PR> --head <SHA> --queue`.
    - `0` `CLEAN` / `HAS_HOOKS` / `BEHIND` → enqueue (b).
    - `3` `DIRTY` → conflicts, which the queue cannot build: "Integrate main" below,
@@ -288,8 +289,8 @@ output and resolve the cause. No automatic full-suite escalation.
 Without that script, follow `${CLAUDE_SKILL_DIR}/generic.md` (the repo's own
 lint, typecheck, formatting, tests, build and assertions).
 Independent checks may run together. A call that can exceed about 8 minutes
-runs with `run_in_background: true`; wait for its completion notification,
-never sleep-poll. Any validation failure blocks this ship.
+runs with `run_in_background: true`, never sleep-polled; its completion wakes you, so carry the workflow on from it in that turn.
+Any validation failure blocks this ship.
 
 Before every push, `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py check --commit HEAD` must exit 0, so
 nothing a hook or a later commit added goes out unreviewed. When the PR's

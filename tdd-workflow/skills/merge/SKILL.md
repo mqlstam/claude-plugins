@@ -57,7 +57,8 @@ PR: the queue proves the merge result before main moves.
    Read this checkout's `package.json` after merging: run `pnpm ship:check` when
    declared, otherwise follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`.
    Only exit `0` passes; fix a failure or environment refusal before continuing.
-   Use background execution and its completion notification for long commands.
+   Use background execution and its completion notification for long commands;
+   its completion wakes you, so carry the workflow on from it in that turn.
    Before every push, `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py check --commit HEAD` must exit 0, so
    nothing a hook or a later commit added goes out unreviewed. Push updates with
    `git push origin <BRANCH>`, and set `<SHA>` to the commit you checked and pushed
@@ -73,7 +74,8 @@ PR: the queue proves the merge result before main moves.
    they stand; `2` → GitHub could not be read: report it and STOP, never guess.
 
 2. **Wait for GitHub to settle its mergeability**, in the background
-   (`run_in_background: true`), and act on the completion notification:
+   (`run_in_background: true`), and act on the completion notification (its
+   completion wakes you; carry on from it in that turn):
    `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py <PR> --head <SHA>`.
    Right after a push GitHub still reports the previous head's state, and a merge
    in that window is answered "merge conflicts" for a branch without any.
