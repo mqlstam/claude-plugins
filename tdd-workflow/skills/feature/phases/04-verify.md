@@ -137,8 +137,10 @@ that code. Do not hold the review back for the stack.
 **c. Local validation**, in the background, on the current tree: the head's one proof,
 `${CLAUDE_PLUGIN_ROOT}/skills/ship/head-proof.md`. It runs where the project's
 verify-phase rule says (a worker, or this checkout), as `ship:check` or as the
-project's CI PR proof instead, never both on one head. With a `ship:check`
-script in this checkout's `package.json`, run `pnpm ship:check`. Add `--add-tests`,
+project's CI PR proof instead, never both on one head. When the rule picks the
+CI PR proof for this change, dispatch that and run no `ship:check`. Otherwise,
+with a `ship:check` script in this checkout's `package.json`, run
+`pnpm ship:check` where the rule says. Add `--add-tests`,
 `--add-package` or `--add-checks` only with `--reason`, for a boundary the automatic
 selection misses. Never narrow it. Without `ship:check`, follow
 `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`, including its assertion-only sweep.

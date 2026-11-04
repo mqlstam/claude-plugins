@@ -78,6 +78,37 @@ class HeadProofRuleTest(unittest.TestCase):
         step = flat(section(read("skills/ship/open-for-review.md"), "3. **Integrate main**",
                             "4. **Push the branch"))
         self.assertNotIn("then local validation on the merged tree", step)
+        # it names no check of its own: what runs is head-proof.md's
+        self.assertNotIn("ship:check", step)
+
+    def test_after_an_integration_the_check_command_is_reached_only_landing_directly(self):
+        # A second full proof restored in the queue path turns this red: the
+        # command may appear only after the direct-landing branch of the step.
+        for relative, start, end in (
+            ("skills/ship/SKILL.md", "**Local validation.**", "Before every push"),
+            ("skills/merge/SKILL.md", "Read this checkout's `package.json` after merging",
+             "Before every push"),
+            ("skills/quickship/SKILL.md", "5. **Validate the merged tree**", "6. **Report main health."),
+        ):
+            step = flat(section(read(relative), start, end))
+            queue, _, direct = step.partition("**Directly**" if "**Directly**" in step else "Landing directly")
+            self.assertTrue(direct, relative)
+            self.assertNotIn("pnpm ship:check", queue, relative)
+            self.assertNotIn("generic.md", queue, relative)
+            self.assertIn("pnpm ship:check", direct, relative)
+
+    def test_verify_runs_no_ship_check_when_the_ci_proof_is_chosen(self):
+        step_c = flat(section(read("skills/feature/phases/04-verify.md"), "**c. Local validation**",
+                              "Do not edit the tree"))
+        self.assertIn("When the rule picks the CI PR proof for this change, dispatch that and run no `ship:check`",
+                      step_c)
+        self.assertLess(step_c.index("run no `ship:check`"), step_c.index("run `pnpm ship:check`"))
+
+    def test_the_methodology_summary_runs_no_second_check_at_ready(self):
+        text = flat(read("skills/tdd-methodology/SKILL.md"))
+        summary = text.split("## Local checks and release gates", 1)[1].split("Each worktree runs", 1)[0]
+        self.assertIn("head-proof.md", summary)
+        self.assertNotIn("on the integrated tree", summary)
 
 
 if __name__ == "__main__":
