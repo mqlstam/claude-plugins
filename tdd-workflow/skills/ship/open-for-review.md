@@ -31,7 +31,11 @@ Attachments are uploaded with your own `gh`: gh refuses an App's token for them.
 
 3. **Integrate main**, as `/ship` does (its "Integrate main" section): fetch,
    `adopt-squash`, the merge with its conventional subject, `verify-state.py
-   integrate`, then local validation on the merged tree. The owner then reviews
+   integrate`. Then the head's one proof decides what runs
+   (`${CLAUDE_PLUGIN_ROOT}/skills/ship/head-proof.md` section 3): **Through the merge
+   queue**, a clean or conflict-only integration runs no new full proof, because
+   VERIFY's proof stands and the queue proves the merge result; landing directly,
+   the merged tree is validated once. The owner then reviews
    the change as it would land, and a PR that is already current needs no new
    commit, and so no new approval, when it lands.
 

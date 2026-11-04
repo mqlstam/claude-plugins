@@ -54,8 +54,12 @@ PR: the queue proves the merge result before main moves.
    a hook changed: give them and the contracts they touch a targeted correctness
    review, and once it is READY run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`.
    Substantive feature changes re-arm VERIFY fully.
-   Read this checkout's `package.json` after merging: run `pnpm ship:check` when
-   declared, otherwise follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`.
+   Read this checkout's `package.json` after merging, then let the head's one proof
+   decide (`${CLAUDE_PLUGIN_ROOT}/skills/ship/head-proof.md` section 3, with the
+   landing path below). **Through the merge queue**, a clean or conflict-only
+   integration runs no new full proof: the queue proves the merge result. Landing
+   directly, run `pnpm ship:check` when declared, otherwise follow
+   `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`.
    Only exit `0` passes; fix a failure or environment refusal before continuing.
    Use background execution and its completion notification for long commands;
    its completion wakes you, so carry the workflow on from it in that turn.

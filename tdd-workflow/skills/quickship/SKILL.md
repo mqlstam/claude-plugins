@@ -51,8 +51,12 @@ exactly the commit that landing put on main (step 8). Production (`/promote`,
    review, and once it is READY run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`.
    The same holds for every later integration retry.
    Keep commit hooks enabled. Never rewrite history or force-push.
-5. **Validate the merged tree.** Read this checkout's own `package.json` after
-   merging. With `ship:check`, run `pnpm ship:check`; add tests, packages or checks
+5. **Validate the merged tree**, as the head's one proof says
+   (`${CLAUDE_PLUGIN_ROOT}/skills/ship/head-proof.md` section 3, with step 1's
+   mode). **Through the merge queue**, a clean or conflict-only integration runs no
+   new full proof: VERIFY's proof stands and the queue proves the merge result, so go
+   on to step 6. **Directly**, nothing else proves the merged tree: read this checkout's own
+   `package.json` after merging. With `ship:check`, run `pnpm ship:check`; add tests, packages or checks
    only with a reason, never narrow its floor. Exit `0` passes; `1` fails; `2`
    refuses the environment. Resolve the named cause; no other exit is a pass.
    Without the script follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`.

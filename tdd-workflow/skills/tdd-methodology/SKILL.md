@@ -124,9 +124,12 @@ Reach for it before reaching for another grep-shaped gate.
 ## Local checks and release gates
 
 Read the checkout's own `package.json`. Where it declares `ship:check`, VERIFY
-runs that fast local lane beside the review, and again after any fix. At READY,
-VERIFY opens the PR for review: it commits, merges origin/main in, runs
-`pnpm ship:check` on the integrated tree, pushes and attaches the evidence. /ship
+runs the head's one proof beside the review (that lane, or the project's CI PR
+proof instead, never both: `skills/ship/head-proof.md`), and again after any fix.
+At READY, VERIFY opens the PR for review: it commits, merges origin/main in,
+pushes and attaches the evidence; through the merge queue a clean or
+conflict-only integration runs no new proof, because the queue proves the merge
+result. /ship
 then lands exactly the PR head that evidence was recorded for. Integration alone does not re-arm VERIFY. The model may add
 coverage with a reason, never remove the automatic floor.
 
