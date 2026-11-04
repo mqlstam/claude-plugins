@@ -41,8 +41,8 @@ for per-worktree stacks — use `pnpm dev:up` on the canonical checkout instead.
 If the repository carries `scripts/worktree-stack.sh` (Endoxia since slice 751),
 the steps below are that script, and it also prepares a worktree no harness set
 up (env links, port lease, dependencies via `scripts/setup-worktree.sh`). Run
-it with `run_in_background: true` (a first spinup builds the image, minutes),
-then report its URLs:
+it with `run_in_background: true` (a first spinup builds the image, minutes; its
+completion wakes you), then report its URLs:
 
 ```bash
 bash scripts/worktree-stack.sh up              # light

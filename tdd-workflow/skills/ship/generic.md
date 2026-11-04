@@ -23,7 +23,8 @@ of tool wall-clock was `sleep`/poll loops** around a validation that exceeds the
    something useful in the foreground (read the diff, draft the PR body) or simply
    wait. The plugin's `bash-shape-guard` hook refuses a foreground `sleep` above
    10 s, a `sleep` inside a loop, and a `| tail` whose status is then used, in
-   subagents too.
+   subagents too. The completion wakes you, so carry the validation on from it in
+   that turn.
 3. **Independent steps run side by side.** Lint, typecheck and the format check read
    only the source and none waits on another: issue them in ONE message. Test and
    build start once those are green, in the background; step 5 runs after the
@@ -45,8 +46,8 @@ of tool wall-clock was `sleep`/poll loops** around a validation that exceeds the
    "Running tests").
    - `pnpm lint`, `pnpm typecheck` and `pnpm format:check`: foreground, in one
      message. If a commit hook changed formatting, this checks the resulting tree.
-   - `pnpm test`, then `pnpm build`: each with `run_in_background: true`, then wait
-     for the notification.
+   - `pnpm test`, then `pnpm build`: each with `run_in_background: true`; its
+     completion wakes you, so carry on from it in that turn.
 
    STOP on failure. A task runner that replays a cached pass (Turborepo's
    `FULL TURBO`) re-proves nothing after a failure: run it again with its cache off
@@ -54,7 +55,8 @@ of tool wall-clock was `sleep`/poll loops** around a validation that exceeds the
 
 5. **Project invariants: the assertions, never the writers.**
    - **The repo has its own sweep** (`gate:checks` in that list) → `pnpm gate:checks`
-     with `run_in_background: true`, and nothing else for this step. The repo knows
+     with `run_in_background: true` (its completion wakes you),
+     and nothing else for this step. The repo knows
      what a name cannot say: which of its scripts write, which run others, and which
      need a build first (Endoxia's skips `env:sync`, runs the links of
      `check:contracts` instead of the aggregate, and refuses a missing build).

@@ -142,7 +142,11 @@ selection misses. Never narrow it. Without `ship:check`, follow
 The reviewers do not write to the tree, so this run is valid unless a fix lands later.
 
 Do not edit the tree while these run. Long commands use `run_in_background: true`.
-Completions arrive as notifications, so never sleep-poll.
+Completions arrive as notifications, so never sleep-poll: each completion wakes you,
+so carry on to step 3 in that turn. A wait on something with no local task (a review in
+another thread you did not start with `delegate_task`, a CI run) is wrapped in a local
+background command that exits on its terminal state; VERIFY never ends its turn on an
+external wait with nothing local to wake it.
 
 ## Step 3 - judge the findings
 

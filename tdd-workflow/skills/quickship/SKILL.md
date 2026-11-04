@@ -56,7 +56,7 @@ exactly the commit that landing put on main (step 8). Production (`/promote`,
    only with a reason, never narrow its floor. Exit `0` passes; `1` fails; `2`
    refuses the environment. Resolve the named cause; no other exit is a pass.
    Without the script follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`.
-   Background calls that can exceed about 8 minutes and wait for notification.
+   Background calls that can exceed about 8 minutes; its completion wakes you, so carry the workflow on from it in that turn.
 6. **Report main health.** Read the newest `endoxia/main-health` status on origin's
    main tip; print red, pending or missing status and whether this change fixes a
    red. A red main does not block this push. Through a merge queue a landing can no
