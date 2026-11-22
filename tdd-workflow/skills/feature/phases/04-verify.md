@@ -44,7 +44,7 @@ deterministic check. It does not get its own agent.
 
 - the slice doc path and its acceptance criteria;
 - the base, `git merge-base HEAD origin/main` (uncommitted work is part of the change);
-- what you ran: the tests, the mutation record, what you verified yourself;
+- what you ran: the tests, the failure modes they prove, what you verified yourself;
 - decisions you took on purpose and why.
 
 Pass facts, not your reasoning. The review's value is that it does not share your
@@ -134,17 +134,15 @@ and saves a screenshot per verified criterion and one short recording per user f
 you named. Give it the list of flows. Launch it as soon as the stack answers and runs
 that code. Do not hold the review back for the stack.
 
-**c. Local validation**, in the background, on the current tree: the head's one proof,
-`${CLAUDE_PLUGIN_ROOT}/skills/ship/head-proof.md`. It runs where the project's
-verify-phase rule says (a worker, or this checkout), as `ship:check` or as the
-project's CI PR proof instead, never both on one head. When the rule picks the
-CI PR proof for this change, dispatch that and run no `ship:check`. Otherwise,
-with a `ship:check` script in this checkout's `package.json`, run
-`pnpm ship:check` where the rule says. Add `--add-tests`,
-`--add-package` or `--add-checks` only with `--reason`, for a boundary the automatic
-selection misses. Never narrow it. Without `ship:check`, follow
-`${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`, including its assertion-only sweep.
-The reviewers do not write to the tree, so this run is valid unless a fix lands later.
+**c. Local validation**, in the background, on the current tree: the pre-queue check,
+`${CLAUDE_PLUGIN_ROOT}/skills/ship/pre-queue-check.md`. Read this checkout's
+`package.json`: with a `precheck` script, run `pnpm precheck`; otherwise, with
+`ship:check`, run `pnpm ship:check` (add `--add-tests`, `--add-package` or
+`--add-checks` only with `--reason`, for a boundary the automatic selection misses;
+never narrow it); otherwise follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`,
+including its assertion-only sweep. Nothing is dispatched for the head: where main
+requires the merge queue, its required check is the proof. The reviewers do not
+write to the tree, so this run is valid unless a fix lands later.
 
 Do not edit the tree while these run. Long commands use `run_in_background: true`.
 Completions arrive as notifications, so never sleep-poll: each completion wakes you,
@@ -185,8 +183,8 @@ context. Then read every finding against the code.
   change to authorization, persistence order, concurrency or workflow history is
   substantive. Only a fix that cannot change behaviour (a message string, a comment)
   skips the review.
-- **Either way,** the head's one proof runs again on the final tree: a fix is a new
-  head of author work (`head-proof.md` section 2).
+- **Either way,** the pre-queue check runs again on the final tree: a fix is a new
+  head of author work (`pre-queue-check.md` section 2).
 
 ## Step 5 - verdict
 

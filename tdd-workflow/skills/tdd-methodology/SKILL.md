@@ -24,13 +24,13 @@ A controlled study, plus this user's own session data, found **no quality gain**
   **46 sub-agents in a session against 1**, to produce handoffs that then had to be
   reconciled.
 
-Three things DID earn their cost, and they are the methodology now:
+Two things DID earn their cost, and they are the methodology now:
 
-1. **Tests as the contract.** The test asserts the slice's acceptance criterion. If
-   you cannot say what it would catch, it is not a test.
-2. **Mutation proof.** Revert the line, watch the named test go red, restore, watch it
-   go green. A test that passes with and without the change is decoration.
-3. **VERIFY.** An independent correctness review of the finished diff and, when the
+1. **Tests as the contract.** The test asserts the slice's acceptance criterion. Name
+   the failure modes the change has and prove those against the real thing; a test
+   earns its place by a plausible product or operations bug that turns it red. If you
+   cannot say what it would catch, it is not a test.
+2. **VERIFY.** An independent correctness review of the finished diff and, when the
    change is observable, a check that uses it on a real stack, both beside the
    local checks.
 
@@ -50,8 +50,9 @@ Fanning out to WRITE is what costs.
   `pnpm --filter <pkg> test <file>…`). Check that the output names your file: in a
   workspace, `vitest run <file>` from the repository root can match no test and
   still exit 0, a run that proves nothing.
-- **The project's `ship:check` selects the rest** at VERIFY and /ship (importers,
-  snapshot owners, a package suite when a test config or shared helper changed).
+- **The project's pre-queue check selects the rest** at VERIFY (`pnpm precheck` or
+  `ship:check`, `skills/ship/pre-queue-check.md`: importers, snapshot owners, a
+  package suite when a test config or shared helper changed).
   Running that selection by hand first does the gate's work twice.
 - **A whole package or repository suite needs a stated reason** (a test config, a
   setup file or a shared testing helper changed; a failure the gate reported is being
@@ -60,26 +61,6 @@ Fanning out to WRITE is what costs.
 Several sessions building at once share one machine: suites and per-mutant drivers
 each started by an agent took it to a load of 37-83 with no idle CPU (Endoxia,
 2026-10-21). The owner's decision is to keep the work small, not to add limits.
-
-## Mutation proof — the ceremony worth keeping
-
-One mutant at a time, against the ONE test file that must turn red. Never a loop or
-driver that runs a suite per mutant, and never two at once.
-
-```bash
-cp path/to/file.ts /tmp/file.ts.bak     # snapshot FIRST
-# revert the line that implements the behaviour
-<per-file test command> path/to/file.test.ts   # MUST go red, naming the behaviour
-cp /tmp/file.ts.bak path/to/file.ts     # restore
-<per-file test command> path/to/file.test.ts   # green again
-```
-
-`<per-file test command>` is the project's (Endoxia: `pnpm --filter <pkg> test <file>`);
-a command that matches no test exits 0 and cannot go red.
-
-**Never restore with `git checkout -- <file>`.** It reverts the file to HEAD, which
-destroys every uncommitted change in it — including work that had nothing to do with
-the mutation.
 
 ## Layer responsibilities
 
@@ -123,13 +104,13 @@ Reach for it before reaching for another grep-shaped gate.
 
 ## Local checks and release gates
 
-Read the checkout's own `package.json`. Where it declares `ship:check`, VERIFY
-runs the head's one proof beside the review (that lane, or the project's CI PR
-proof instead, never both: `skills/ship/head-proof.md`), and again after any fix.
-At READY, VERIFY opens the PR for review: it commits, merges origin/main in,
-pushes and attaches the evidence; through the merge queue a clean or
-conflict-only integration runs no new proof, because the queue proves the merge
-result. /ship
+Read the checkout's own `package.json`. VERIFY runs its pre-queue check beside
+the review (`pnpm precheck` when declared, else `ship:check`, else the generic
+checks: `skills/ship/pre-queue-check.md`), and again after any fix. Nothing is
+dispatched for a PR head. At READY, VERIFY opens the PR for review: it commits,
+merges origin/main in, pushes and attaches the evidence; through the merge queue a
+clean or conflict-only integration runs no new check, because the queue's required
+check proves the merge result. /ship
 then lands exactly the PR head that evidence was recorded for. Integration alone does not re-arm VERIFY. The model may add
 coverage with a reason, never remove the automatic floor.
 
@@ -141,6 +122,6 @@ reported and fixed forward through an ordinary ship. It does not block ships.
 Staging refuses a known red SHA and warns on unknown health. Promote runs the
 whole suite on the exact production SHA, reusing a verified green when available.
 
-Repositories without `ship:check` keep their own lint, typecheck, formatting,
+Repositories with neither keep their own lint, typecheck, formatting,
 test, build and assertion commands. Merge main in rather than rewriting history.
 Never sleep-poll a long command: background it and wait for its completion notice.

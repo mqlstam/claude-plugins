@@ -1,6 +1,6 @@
 # Generic local validation
 
-Use only when this checkout has no `ship:check` script. Read its own `package.json`;
+Use only when this checkout has neither a `precheck` nor a `ship:check` script. Read its own `package.json`;
 never infer the commands from a remote branch. For shipping, integrate as /ship
 step 4 does, `verify-state.py adopt-squash` and then
 `git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main`,

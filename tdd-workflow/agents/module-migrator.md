@@ -68,7 +68,7 @@ const user = await authService.validateCredentials({ email, password });
 One run of those files, with the project's per-file test command (the project's
 own rule names it; Endoxia: `pnpm --filter <pkg> test <file>…`). Check that the
 output names them: from a workspace root, `vitest run <file>` can match no test
-and still exit 0. Never the package or repository suite: VERIFY's `ship:check`
+and still exit 0. Never the package or repository suite: VERIFY's pre-queue check
 selects what your changes reach.
 
 ## Output Format

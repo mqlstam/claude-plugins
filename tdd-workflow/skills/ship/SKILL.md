@@ -275,24 +275,26 @@ paths again (or name each flow NOT RUN with its reason) with the new `verdictId`
 for review again, and STOP for the owner; `review-covers` refuses the old manifest.
 Substantive new feature work re-arms VERIFY fully.
 
-**Local validation.** The head's one proof decides it
-(`${CLAUDE_PLUGIN_ROOT}/skills/ship/head-proof.md` section 3). **Through the merge
+**Local validation.** The pre-queue check decides it
+(`${CLAUDE_PLUGIN_ROOT}/skills/ship/pre-queue-check.md` section 3). **Through the merge
 queue** (`merge-queue.py mode` exit `0`), a clean or conflict-only integration
-runs no new full proof: VERIFY's proof of the reviewed work stands, and the queue's
+runs no new check: VERIFY's check of the reviewed work stands, and the queue's
 required check proves the merge result before main moves. A resolution that wrote
 new code is a fix: VERIFY step 4. **Directly** (`merge_queue=none`), nothing else
-proves the merge result, so read the checkout's own `package.json` after the merge.
-When it declares `ship:check`, run `pnpm ship:check` once. It already ran in
-VERIFY; this second run reuses each pass whose input contents are byte-identical,
-so a no-op or docs-only merge re-runs only what the merge reaches. On that path never
-skip it, and never replace it with commands picked by hand. It selects affected
-lint/typecheck, scoped assertions and directly touched tests. The model may add
-`--add-tests`, `--add-package` or `--add-checks`, each with `--reason`, for a
-boundary the automatic selection cannot see; nothing narrows the floor.
+proves the merge result, so read the checkout's own `package.json` after the merge
+and run its check once on the merged tree. When it declares `precheck`, run
+`pnpm precheck`. Otherwise, when it declares `ship:check`, run `pnpm ship:check`. It
+already ran in VERIFY; this second run reuses each pass whose input contents are
+byte-identical, so a no-op or docs-only merge re-runs only what the merge reaches.
+On that path never skip it, and never replace it with commands picked by hand. It
+selects affected lint/typecheck, scoped assertions and directly touched tests. The
+model may add `--add-tests`, `--add-package` or `--add-checks`, each with
+`--reason`, for a boundary the automatic selection cannot see; nothing narrows the
+floor.
 Exit `0` passes, `1` fails, `2` refuses (fix the named environment issue, then
 retry). Any other nonzero exit or interrupted command is not a pass: report its
 output and resolve the cause. No automatic full-suite escalation.
-Without that script, follow `${CLAUDE_SKILL_DIR}/generic.md` (the repo's own
+Without either script, follow `${CLAUDE_SKILL_DIR}/generic.md` (the repo's own
 lint, typecheck, formatting, tests, build and assertions).
 Independent checks may run together. A call that can exceed about 8 minutes
 runs with `run_in_background: true`, never sleep-polled; its completion wakes you, so carry the workflow on from it in that turn.

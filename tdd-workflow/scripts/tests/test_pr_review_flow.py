@@ -133,7 +133,7 @@ class LandsExactlyTheReviewedHeadTest(unittest.TestCase):
 
     def test_version(self):
         manifest = json.loads(read(os.path.join(ROOT, ".claude-plugin", "plugin.json")))
-        self.assertEqual(manifest["version"], "1.13.0")
+        self.assertEqual(manifest["version"], "1.14.0")
 
 
 class AppSetupDocTest(unittest.TestCase):

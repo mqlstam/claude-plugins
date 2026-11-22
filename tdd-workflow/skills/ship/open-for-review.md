@@ -31,11 +31,11 @@ Attachments are uploaded with your own `gh`: gh refuses an App's token for them.
 
 3. **Integrate main**, as `/ship` does (its "Integrate main" section): fetch,
    `adopt-squash`, the merge with its conventional subject, `verify-state.py
-   integrate`. Then the head's one proof decides what runs
-   (`${CLAUDE_PLUGIN_ROOT}/skills/ship/head-proof.md` section 3): **Through the merge
-   queue**, a clean or conflict-only integration runs no new full proof, because
-   VERIFY's proof stands and the queue proves the merge result; landing directly,
-   the merged tree is validated once. The owner then reviews
+   integrate`. Then the pre-queue check decides what runs
+   (`${CLAUDE_PLUGIN_ROOT}/skills/ship/pre-queue-check.md` section 3): **Through the merge
+   queue**, a clean or conflict-only integration runs no new check, because
+   VERIFY's check stands and the queue proves the merge result; landing directly,
+   the merged tree is checked once. The owner then reviews
    the change as it would land, and a PR that is already current needs no new
    commit, and so no new approval, when it lands.
 
@@ -44,7 +44,8 @@ Attachments are uploaded with your own `gh`: gh refuses an App's token for them.
    Never force.
 
 5. **Write the body file**, `.claude/verify-evidence/pr-body.md` (ignored by git):
-   - the summary and the validation evidence (what ran, the mutation record);
+   - the summary and the validation evidence (the pre-queue check that ran, on which
+     commit, and its result; the tests and the failure modes they prove);
    - `## Evidence`, from `.claude/verify-evidence/manifest.json`, first line the
      marker that `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py review-marker`
      prints (`<!-- verify-verdict: <digest> -->`; `/ship` lands only the head that

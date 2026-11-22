@@ -24,7 +24,7 @@ Run only the test file you wrote, with the project's per-file test command (the
 project's own rule names it; Endoxia: `pnpm --filter <pkg> test <file>`), and check
 that the output names your file: from a workspace root, `vitest run <file>` can match
 no test and still exit 0. Never a package or repository suite: the parent's VERIFY
-runs `ship:check`, which selects what your file reaches.
+runs the project's pre-queue check, which selects what your file reaches.
 
 ## TDD Cycle
 

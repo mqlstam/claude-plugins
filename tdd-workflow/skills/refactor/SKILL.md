@@ -2,7 +2,7 @@
 name: refactor
 description: >-
   Start a TDD refactoring workflow. Default is a single-agent build: characterization
-  tests and the migration together, then mutation proof, then VERIFY. Pass --layers to
+  tests and the migration together, then VERIFY. Pass --layers to
   fan out per-layer test writers and module migrators. Use when the user wants to
   refactor, restructure, extract, or reorganize existing code.
 argument-hint: <target> [--layers]
@@ -38,7 +38,7 @@ module by module. Not a per-layer test-writer fan-out, and not a per-module migr
 Measured position, not preference: a controlled study plus this user's own session data
 (**8-10× the token volume, 46 sub-agents in a session against 1**) found no quality gain
 from rigid red-green sequencing or per-layer builder agents. What earns its cost —
-tests as the contract, mutation proof and VERIFY — is kept in full.
+tests as the contract and VERIFY — is kept in full.
 
 The ANALYZE fan-out is different and stays: `dependency-mapper`, `caller-finder`,
 `test-scanner` and `impact-assessor` are **read-only searches over disjoint questions**,
@@ -53,20 +53,13 @@ files and can be migrated without reading each other's output. Then fan out
 and reconcile. If you end up merging their assumptions by hand, they were not
 independent — finish it yourself and say so.
 
-## Mutation proof — required before VERIFY
+## Which tests
 
-A refactor's tests must be able to fail. One mutant at a time, against the one test
-file that must turn red; never a loop or driver that runs a suite per mutant.
-
-1. Snapshot the file: `cp <file> /tmp/<file>.bak`
-2. Revert the line that carries the refactored behaviour
-3. Re-run only the covering test file, with the project's per-file test command
-   (Endoxia: `pnpm --filter <pkg> test <file>`) — it MUST go red, naming the behaviour
-4. Restore from the snapshot. **Never** `git checkout -- <file>` — it reverts to HEAD
-   and destroys every uncommitted change in that file
-5. Re-run — green
-
-Record the mutated line and the test that caught it.
+Name the failure modes this refactor could introduce (a caller that now sees other
+behaviour, a persisted format that moved, a path that no longer runs), and prove those
+against the real thing: the characterization tests hold the behaviour the callers
+rely on, through the real code. A test earns its place by a plausible product or
+operations bug that turns it red.
 
 ## Parallelism overview
 
@@ -99,12 +92,11 @@ When entering a phase, read its detail file.
 
 1. **Single-agent build by default**; `--layers` only for genuinely independent modules
 2. **Fan out to FIND, not to WRITE** — ANALYZE is parallel because its questions are disjoint and read-only
-3. **Mutation proof before VERIFY** — non-negotiable
-4. **Track progress** — update tasks on phase entry and completion
-5. **No backward compatibility** — delete old code, old exports, old types. No
+3. **Track progress** — update tasks on phase entry and completion
+4. **No backward compatibility** — delete old code, old exports, old types. No
    re-exports, no `_deprecated` prefixes, no `// removed` comments, no shims. Update
    ALL callers in the MIGRATE phase instead
-6. **Never `sleep`-poll a long command** — run it with `run_in_background: true`;
+5. **Never `sleep`-poll a long command** — run it with `run_in_background: true`;
    its completion wakes you, so carry the workflow on from it in that turn. Never end the turn waiting on something with no local task (a GitHub run, a
    remote job): wrap that wait in a local background command that exits on its terminal
    state (the plugin context's "A background step is yours" rule)

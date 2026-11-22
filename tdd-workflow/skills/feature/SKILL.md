@@ -2,8 +2,7 @@
 name: feature
 description: >-
   Start a TDD feature workflow. Default is a single-agent build: tests and
-  implementation together against the slice's acceptance criteria, then mutation
-  proof, then VERIFY. Pass --layers to fan out per-layer builders. Use when the user
+  implementation together against the slice's acceptance criteria, then VERIFY. Pass --layers to fan out per-layer builders. Use when the user
   wants to build a new feature, add functionality, or implement a vertical slice.
 argument-hint: <feature-name> [--layers]
 ---
@@ -49,8 +48,8 @@ fan-out of per-layer builders.
 This is a measured position, not a preference. A controlled study plus this user's own
 session data (**8-10× the token volume, 46 sub-agents in a session against 1**) found
 no quality gain from rigid red-green sequencing or from per-layer builder agents. What
-does earn its cost is: **tests as the contract**, **mutation proof**, and **VERIFY**.
-Those are kept, in full.
+does earn its cost is: **tests as the contract** and **VERIFY**. Those are kept, in
+full.
 
 So write the test and the code for a behaviour together, at whatever granularity the
 behaviour actually has. Keep the test honest — it asserts the acceptance criterion,
@@ -75,25 +74,12 @@ If the layers depend on each other — the usual case for a vertical slice — t
 costs a multiple of the tokens to produce a handoff you then have to reconcile. Build
 it yourself.
 
-## Mutation proof — required before VERIFY
+## Which tests
 
-Before entering VERIFY, prove the tests can fail for the right reason. One mutant at
-a time, against the one test file that must turn red; never a loop or driver that
-runs a suite per mutant.
-
-1. Pick the line that implements the new behaviour.
-2. Revert it (do not commit).
-3. Re-run only the test file that claims to cover it, with the project's per-file
-   test command (Endoxia: `pnpm --filter <pkg> test <file>`) — it **must** go red,
-   and the failure must name the behaviour. A command that matches no test exits 0
-   and can never go red.
-4. Restore the line with `cp` from a snapshot you took first. **Never** restore with
-   `git checkout -- <file>` — that reverts to HEAD and destroys every uncommitted
-   change in the file, including work that was never part of the mutation.
-5. Re-run — green again.
-
-A test that passes with and without the change is decoration. Record which line you
-mutated and which test went red; VERIFY and the PR both want it.
+Name the failure modes this change has, and prove those against the real thing:
+real inputs through the real code to an asserted output, row, response or rendered
+state. A test earns its place by a plausible product or operations bug that turns it
+red. A test that would pass with and without the change proves nothing.
 
 ## Phases
 
@@ -110,11 +96,10 @@ When entering a phase, read its detail file.
 
 1. **Read the slice before building** — the acceptance criteria are the contract
 2. **Single-agent build by default**; `--layers` only for genuinely independent surfaces
-3. **Mutation proof before VERIFY** — non-negotiable
-4. **Track progress** — update tasks on phase entry and completion
-5. **No backward compatibility** — delete old code completely. No re-exports, no
+3. **Track progress** — update tasks on phase entry and completion
+4. **No backward compatibility** — delete old code completely. No re-exports, no
    `_deprecated` prefixes, no `// removed` comments, no shims
-6. **Never `sleep`-poll a long command** — run it with `run_in_background: true`;
+5. **Never `sleep`-poll a long command** — run it with `run_in_background: true`;
    its completion wakes you, so carry the workflow on from it in that turn. Never end the turn waiting on something with no local task (a GitHub run, a
    remote job): wrap that wait in a local background command that exits on its terminal
    state (the plugin context's "A background step is yours" rule)
