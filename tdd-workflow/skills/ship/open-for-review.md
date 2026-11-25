@@ -2,7 +2,7 @@
 
 The owner approves a change by watching its evidence on the pull request, BEFORE it
 merges (owner, 2026-10-22). This phase puts the reviewed work up for that: it
-commits, integrates main, pushes the branch and opens or updates the PR with the
+commits, pushes the branch and opens or updates the PR with the
 runtime evidence. Nothing here merges, tags or deploys, so it needs no approval.
 VERIFY runs it at READY; `/ship` runs it when the PR is missing or its evidence is
 stale. Many chats do this in parallel, each for its own branch.
@@ -29,15 +29,14 @@ Attachments are uploaded with your own `gh`: gh refuses an App's token for them.
    `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py check --commit HEAD` must
    exit 0 (an index staged before the review can commit other contents).
 
-3. **Integrate main**, as `/ship` does (its "Integrate main" section): fetch,
-   `adopt-squash`, the merge with its conventional subject, `verify-state.py
-   integrate`. Then the pre-queue check decides what runs
-   (`${CLAUDE_PLUGIN_ROOT}/skills/ship/pre-queue-check.md` section 3): **Through the merge
-   queue**, a clean or conflict-only integration runs no new check, because
-   VERIFY's check stands and the queue proves the merge result; landing directly,
-   the merged tree is checked once. The owner then reviews
-   the change as it would land, and a PR that is already current needs no new
-   commit, and so no new approval, when it lands.
+3. **Integrate main only when GitHub reports a conflict.** Opening a PR merges
+   nothing in: the merge queue builds the head on current main and proves that
+   result. Once the PR exists, read `gh pr view <PR> --json mergeable`; only on
+   `CONFLICTING` integrate main as `/ship` does (its "Integrate main" section:
+   fetch, `adopt-squash`, the merge with its conventional subject, `verify-state.py
+   integrate`), then push again; what runs after it is
+   `${CLAUDE_PLUGIN_ROOT}/skills/ship/pre-queue-check.md` section 3. Landing
+   directly, with no merge queue, `/ship` integrates and checks the merged tree.
 
 4. **Push the branch:** `verify-state.py check --commit HEAD` again, then
    `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent-github-token.py run git push -u origin <BRANCH>`.

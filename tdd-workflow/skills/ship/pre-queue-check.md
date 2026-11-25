@@ -26,8 +26,9 @@ body's validation evidence names the command, the commit it ran on and its resul
 ## 2. When it runs
 
 - In VERIFY, beside the reviewers, on the tree under review (VERIFY step 2c).
-- Again only when the author changes the reviewed contents: a fix (VERIFY step 4).
-  That is a new head of author work.
+- After a fix (VERIFY step 4) it does not run again: the touched files' tests run,
+  with the project's per-file test command, and the merge queue proves the head.
+  Landing directly, with no queue, the merged tree is checked once (section 3).
 
 ## 3. Integrating main
 
@@ -44,7 +45,7 @@ Read `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py mode` once for the la
   The queue's required check builds the PR on current main and proves that merge
   result before main moves. A red queue entry is fixed on the branch and queued
   again. A resolution that writes new code to make the two sides work together is
-  author work: treat it as a fix (section 2).
+  author work: treat it as a fix (VERIFY step 4).
 - **Directly** (`1` `merge_queue=none`, or a direct push to main): nothing else
   proves the merge result, so the merged tree is checked once after the
   integration, with the command of section 1.

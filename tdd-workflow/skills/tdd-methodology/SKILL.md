@@ -120,11 +120,12 @@ Reach for it before reaching for another grep-shaped gate.
 
 Read the checkout's own `package.json`. VERIFY runs its pre-queue check beside
 the review (`pnpm precheck` when declared, else `ship:check`, else the generic
-checks: `skills/ship/pre-queue-check.md`), and again after any fix. Nothing is
-dispatched for a PR head. At READY, VERIFY opens the PR for review: it commits,
-merges origin/main in, pushes and attaches the evidence; through the merge queue a
-clean or conflict-only integration runs no new check, because the queue's required
-check proves the merge result. /ship
+checks: `skills/ship/pre-queue-check.md`); after a fix, the touched files' tests.
+Nothing is dispatched for a PR head. At READY, VERIFY opens the PR for review: it
+commits, pushes and attaches the evidence, and merges origin/main in only when
+GitHub reports a conflict; through the merge queue a clean or conflict-only
+integration runs no new check, because the queue's required check proves the merge
+result. /ship
 then lands exactly the PR head that evidence was recorded for. Integration alone does not re-arm VERIFY.
 
 Each worktree runs independently. Push, open the PR and squash-merge directly,

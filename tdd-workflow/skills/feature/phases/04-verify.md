@@ -153,14 +153,8 @@ external wait with nothing local to wake it.
 
 ## Step 3 - judge the findings
 
-You are the author. First compare the review's **Coverage** with the change and with
-the scopes of the project's rules. An applicable rule it did not read, a changed file
-it did not read, or a criterion without a traced production path makes the review
-incomplete: send one more round for exactly what it skipped before you rely on its
-verdict. Coverage adds up across rounds: earlier coverage stands for paths and
-contracts the fixes did not touch, so a follow-up round needs coverage only of its
-delta and of what that delta affects. Pass the previous Coverage with the follow-up
-context. Then read every finding against the code.
+You are the author. Read every finding against the code. The review's **Coverage**
+says what it read; a gap there is yours to weigh and never buys a round by itself.
 
 - **Real:** fix it. It gets a regression test, at the boundary that owns the
   behaviour, only where the defect can come back and nothing else would catch it.
@@ -171,24 +165,24 @@ context. Then read every finding against the code.
 
 ## Step 4 - re-check only what changed
 
-The review is sized to the change: one full independent review, then at most two
-re-checks (three rounds in all).
+The review is sized to the change: one full round by the other model family, three
+rounds at most.
 
-- **After a fix, or a merge of main resolved by hand:** one re-check of the changed
-  hunks only: a new `delegate_task` call (new `clientRequestId`) or a new agent,
-  carrying the original brief, the slice, the base, the previous findings, your
-  response to each, and the diff since the previous round.
-- **After a wording-only change** (a message string, a comment, a doc): none. Judge
-  that by what the change can reach, not by its length: one line in authorization,
-  persistence order, concurrency or workflow history is a fix.
-- **Across a rebase or a merge of main the verdict carries** when the change's own
-  diff is unchanged: `git diff $(git merge-base HEAD origin/main) HEAD | git patch-id --stable`
-  gives the same id before and after.
+- **After a substantive fix:** one targeted verifier on the fix: a new
+  `delegate_task` call (new `clientRequestId`) or a new agent, carrying the original
+  brief, the slice, the base, the previous findings, your response to each, and the
+  diff since the previous round. It reads the changed hunks only. Substantive is
+  judged by what the change can reach, not by its length: one line in authorization,
+  persistence order, concurrency or workflow history is substantive.
+- **After a docs, tests or wording change:** none.
+- **Across a merge of main the verdict carries** when the reviewed diff is unchanged:
+  `git diff $(git merge-base HEAD origin/main) HEAD | git patch-id --stable` gives the
+  same id before and after.
 - **Re-run the runtime criteria** whose implementation or prerequisites a fix
   changed, on a stack running the fixed code, with the next round's evidence
   directory (`r2/`, `r3/`). A criterion's evidence is the newest round's that ran it.
-- **After a fix,** the pre-queue check runs again on the final tree: a fix is a new
-  head of author work (`pre-queue-check.md` section 2).
+- **After a fix, run the touched files' tests,** with the project's per-file test
+  command. The pre-queue check does not run again: the merge queue proves the head.
 
 ## Step 5 - verdict
 
@@ -230,7 +224,7 @@ it, which a stop from inside one session cannot know.
   touch before this verdict counts again.
 
   **Then open the PR for review, in this chat, without asking:**
-  `${CLAUDE_PLUGIN_ROOT}/skills/ship/open-for-review.md`. It commits, integrates main,
+  `${CLAUDE_PLUGIN_ROOT}/skills/ship/open-for-review.md`. It commits,
   pushes the branch, opens (or updates) the PR with the evidence, links it to the
   thread, watches it, and tells the owner in one short message the PR URL and what to
   watch. Nothing merges, so it needs no approval. The owner approves on GitHub or
