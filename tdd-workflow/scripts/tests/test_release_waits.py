@@ -442,6 +442,72 @@ class BoundedWaitTest(unittest.TestCase):
         self.assertIn("ran out of time", lines[-1])
 
 
+class SpotRerunTest(unittest.TestCase):
+    """RunsOn reruns a job whose Spot instance was reclaimed: that attempt's red is not
+    the release's verdict, the next attempt's conclusion is. A job that turned the
+    retry off (a production-capable run) is never held."""
+
+    NOW = 1_800_000_000.0
+    URL = "https://github.com/o/r/actions/runs/9"
+    SPOT = "runs-on=9/runner=4cpu-linux-x64"
+
+    def stamp(self, epoch):
+        return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).isoformat()
+
+    def run_await(self, label, second):
+        """Attempt 1 ended red at second 0 on a Spot-annotated job carrying `label`;
+        attempt 2 starts at second 60 and concludes `second` at second 120."""
+        clock = Clock()
+
+        def answer(args):
+            if args[0] == "api" and "/attempts/" in args[-1]:
+                # Job 7 of attempt 1 was interrupted; job 8 of attempt 2 failed for itself.
+                first = "/actions/runs/9/attempts/1/jobs" in args[-1]
+                return [{"jobs": [{"id": 7 if first else 8, "name": "build", "conclusion": "failure",
+                                   "labels": [label]}]}]
+            if args[0] == "api":
+                if "check-runs/8/annotations" in args[-1]:
+                    return [{"title": "Process completed with exit code 1.", "annotation_level": "failure"}]
+                self.assertIn("check-runs/7/annotations", args[-1])
+                return [{"title": "EC2 Spot interruption", "annotation_level": "failure", "message": "reclaimed"}]
+            if "jobs" in args[4]:
+                return {"status": "completed", "conclusion": "failure", "url": self.URL, "jobs": []}
+            if clock.t < 60:
+                return {"status": "completed", "conclusion": "failure", "url": self.URL, "attempt": 1,
+                        "startedAt": self.stamp(self.NOW - 600), "updatedAt": self.stamp(self.NOW)}
+            done = clock.t >= 120
+            return {"status": "completed" if done else "in_progress", "conclusion": second if done else "",
+                    "url": self.URL, "attempt": 2, "startedAt": self.stamp(self.NOW + 60),
+                    "updatedAt": self.stamp(self.NOW + clock.t)}
+
+        gh = SlowGh(clock, answer, takes=lambda _a, _t: 0)
+        old = rr.gh_json
+        rr.gh_json = gh
+        try:
+            code, out = rr.await_run("9", None, 190 * 60, 30, slice_s=9 * 60, clock=clock.now,
+                                     sleep=clock.sleep, wall=lambda: self.NOW + clock.t)
+        finally:
+            rr.gh_json = old
+        return code, out, clock.t
+
+    def test_a_spot_interrupted_attempt_is_followed_into_a_green_rerun(self):
+        code, out, _ = self.run_await(self.SPOT, "success")
+        self.assertEqual(code, 0, out)
+        self.assertIn("spot_interruption_rerun_expected run_id=9 attempt=1 job=build", out)
+        self.assertEqual(out.splitlines()[0], f"conclusion=success run_id=9 url={self.URL}")
+
+    def test_a_rerun_that_ends_red_is_red(self):
+        code, out, _ = self.run_await(self.SPOT, "failure")
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"conclusion=failure run_id=9 url={self.URL}", out)
+
+    def test_a_job_with_the_retry_off_is_red_at_attempt_one_and_never_held(self):
+        for label in (self.SPOT + "/retry=false", self.SPOT + "/spot=false"):
+            code, out, waited = self.run_await(label, "success")
+            self.assertEqual((code, waited), (1, 0.0), out)
+            self.assertNotIn("spot_interruption", out)
+
+
 class GhCallTimeoutTest(unittest.TestCase):
     """The timeout reaches the real `gh` process: a hung `gh` is killed at it."""
 

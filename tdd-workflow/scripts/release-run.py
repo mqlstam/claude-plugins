@@ -8,7 +8,9 @@
         Exits when the run is completed and prints `conclusion=<conclusion> run_id=<id>
         url=<url>`, read from `gh run view --json status,conclusion`, never from a
         watch's exit code. A conclusion other than `success` is followed by the reason
-        (see `reason`). `--deadline-min` counts from the run's own start, so a session
+        (see `reason`). A failed attempt that RunsOn reruns by itself after an EC2 Spot
+        interruption is not a verdict: the same run id is followed into its next
+        attempt (`spot_rerun_expected`). `--deadline-min` counts from the run's own start, so a session
         that waits in slices of `--slice-min` (required, at most `FOREGROUND_SLICE_MIN`)
         re-runs the same command and the bound stays the run's, not the slice's.
 
@@ -295,11 +297,81 @@ def reason(run_id: str, repo: str | None, stop: float | None = None,
     return 1, classify(view, annotations_of)
 
 
+# --- a Spot interruption RunsOn reruns itself ---------------------------------------
+
+# The annotation RunsOn writes on a job whose EC2 Spot instance was reclaimed. The
+# same title as `SPOT_INTERRUPTION_ANNOTATION_TITLE` in the Endoxia repository's
+# `scripts/ci/spot-retry.mjs`; matched whole, never as a substring.
+SPOT_INTERRUPTION_TITLE = "EC2 Spot interruption"
+
+# RunsOn reruns an interrupted job by itself up to attempt 3 (runs-on.com, "Spot
+# instances", v3.6.0, read 2026-11-25): a run that failed at attempt 3 stays failed.
+SPOT_LAST_ATTEMPT = 3
+
+# How long a failed attempt is held for RunsOn's rerun. RunsOn checks a failed run
+# every 2 minutes in the first hour after the interrupted job finished and asks for
+# the rerun only once the attempt has completed (same page), so the rerun is asked
+# for within two checks of the attempt's completion: 240 s. `await` adds one poll,
+# the longest it can take to see the new attempt. Counted from the run's `updatedAt`
+# (GitHub's time of the attempt's completion), so every slice of a foreground wait
+# measures the same hold; past it RunsOn started nothing (it starts none after an
+# attempt that concluded `cancelled`, runs-on issue #588) and the red stands.
+SPOT_RERUN_HOLD_S = 240
+
+# One page of a run attempt's jobs, GitHub's largest (docs.github.com, REST "List jobs
+# for a workflow run attempt"); `--paginate --slurp` reads the pages after it.
+JOBS_PER_PAGE = 100
+
+
+def _owner_repo(run_url: str) -> str | None:
+    m = re.match(r"https://github\.com/([^/]+)/([^/]+)/actions/runs/", run_url or "")
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def spot_rerun_expected(run_id: str, attempt: object, run_url: str, stop: float,
+                        clock=time.monotonic) -> str | None:
+    """The name of a failed job of this attempt that RunsOn will rerun by itself, or
+    None when the red stands.
+
+    RunsOn reruns the failed jobs of an attempt when (a) the attempt is below
+    `SPOT_LAST_ATTEMPT`, (b) a job that concluded `failure` carries an annotation
+    titled exactly `SPOT_INTERRUPTION_TITLE`, and (c) that job asked for a RunsOn
+    runner (a `runs-on=` label) without `retry=false` or `spot=false` in any of its
+    labels. A production-capable job sets `retry=false`, so its red is never held.
+    Anything that cannot be read by `stop` counts as no rerun: the red is reported as
+    it is today, and `reason` names what was unread."""
+    if not isinstance(attempt, int) or isinstance(attempt, bool) or not 1 <= attempt < SPOT_LAST_ATTEMPT:
+        return None
+    owner_repo = _owner_repo(run_url)
+    if owner_repo is None:
+        return None
+    pages = gh_json(["api", "--paginate", "--slurp",
+                     f"repos/{owner_repo}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page={JOBS_PER_PAGE}"],
+                    timeout=_call_timeout(stop, clock()))
+    if not isinstance(pages, list):
+        return None
+    for page in pages:
+        for job in (page.get("jobs") or []) if isinstance(page, dict) else []:
+            if not isinstance(job, dict) or job.get("conclusion") != "failure":
+                continue
+            labels = [str(label) for label in (job.get("labels") or [])]
+            if not any("runs-on=" in label for label in labels):
+                continue
+            if any("retry=false" in label or "spot=false" in label for label in labels):
+                continue
+            notes = gh_json(["api", _annotations_path(run_url, job.get("id"))],
+                            timeout=_call_timeout(stop, clock()))
+            if isinstance(notes, list) and any(
+                    isinstance(a, dict) and a.get("title") == SPOT_INTERRUPTION_TITLE for a in notes):
+                return str(job.get("name"))
+    return None
+
+
 # --- the wait ---------------------------------------------------------------------
 
 def await_run(run_id: str, repo: str | None, deadline_s: float, poll_s: float,
               slice_s: float | None = None, clock=time.monotonic, sleep=time.sleep,
-              wall=time.time, explain=reason) -> tuple[int, str]:
+              wall=time.time, explain=reason, rerun_expected=None) -> tuple[int, str]:
     """Wait until the run completes, the run's own deadline passes, or the slice ends.
 
     The deadline counts from the run's `startedAt` (GitHub's `run_started_at`, which
@@ -308,7 +380,15 @@ def await_run(run_id: str, repo: str | None, deadline_s: float, poll_s: float,
     start, so each slice of a foreground wait measures against the same bound. No poll or pause starts past
     the earlier of the two, and the call returns by it plus one `gh` call, a failed
     run's reason reads included: what they could not read by then is named, with the
-    command that reads it (`reason`)."""
+    command that reads it (`reason`).
+
+    A completed attempt that did not succeed is a verdict unless RunsOn will rerun it
+    after a Spot interruption (`spot_rerun_expected`, asked once per attempt). Then the
+    wait goes on with the same run id until the next attempt shows, and that attempt
+    is judged as any other. The hold lasts `SPOT_RERUN_HOLD_S` plus one poll from the
+    attempt's completion; past it the red stands, with a line saying no rerun came.
+    The deadline and the slice end the call during the hold as they do otherwise."""
+    rerun_expected = rerun_expected or spot_rerun_expected
     start = clock()
     end = start + deadline_s
     # The slice's end; without a slice the run's deadline alone stops the call, and
@@ -317,8 +397,14 @@ def await_run(run_id: str, repo: str | None, deadline_s: float, poll_s: float,
     status = "unknown"
     url = "-"
     anchor: float | None = None
+    # Per attempt: the interrupted job RunsOn will rerun (None: the red stands), and
+    # when the hold for its rerun ends, on this call's clock.
+    held: dict[object, tuple[str | None, float]] = {}
+    notes: list[str] = []
     while True:
-        view = gh_json(["run", "view", run_id, "--json", "status,conclusion,url,createdAt,startedAt",
+        hold_end = math.inf
+        view = gh_json(["run", "view", run_id, "--json",
+                        "status,conclusion,url,createdAt,startedAt,updatedAt,attempt",
                         *_repo(repo)], timeout=_call_timeout(min(end, slice_end), clock()))
         if isinstance(view, dict):
             status = str(view.get("status") or "unknown")
@@ -335,19 +421,38 @@ def await_run(run_id: str, repo: str | None, deadline_s: float, poll_s: float,
                 conclusion = str(view.get("conclusion") or "unknown")
                 line = f"conclusion={conclusion} run_id={run_id} url={url}"
                 if conclusion == "success":
-                    return 0, line
-                _, why = explain(run_id, repo, min(end, slice_end), clock)
-                return 1, "\n".join([line, *why])
+                    return 0, "\n".join([line, *notes])
+                attempt = view.get("attempt")
+                if attempt not in held:
+                    job = rerun_expected(run_id, attempt, url, min(end, slice_end), clock)
+                    ended = _epoch(view.get("updatedAt"))
+                    waited = max(0.0, wall() - ended) if ended is not None else 0.0
+                    held[attempt] = (job, clock() + SPOT_RERUN_HOLD_S + poll_s - waited)
+                    if job is not None:
+                        notes.append(f"spot_interruption_rerun_expected run_id={run_id} "
+                                     f"attempt={attempt} job={job}")
+                job, hold_end = held[attempt]
+                if job is None or clock() >= hold_end:
+                    if job is not None:
+                        notes.append(f"spot_interruption_no_rerun run_id={run_id} attempt={attempt} "
+                                     f"after={SPOT_RERUN_HOLD_S + poll_s:g}s: RunsOn started no attempt; "
+                                     f"rerun the failed jobs (gh run rerun {run_id} --failed)")
+                    _, why = explain(run_id, repo, min(end, slice_end), clock)
+                    return 1, "\n".join([line, *notes, *why])
         now = clock()
         if now >= end:
-            return 5, (f"release_run_await_deadline NOT CONCLUDED run_id={run_id} status={status} url={url} "
-                       f"after={deadline_s / 60:g}min since the run started: the run is still open and has no "
-                       "verdict; it is not done")
+            return 5, "\n".join([(
+                f"release_run_await_deadline NOT CONCLUDED run_id={run_id} status={status} url={url} "
+                f"after={deadline_s / 60:g}min since the run started: the run is still open and has no "
+                "verdict; it is not done"), *notes])
         if now >= slice_end:
-            return 6, (f"release_run_still_running run_id={run_id} status={status} url={url} "
-                       f"{max(0.0, end - now) / 60:.0f}min left of the run's {deadline_s / 60:g}min bound: "
-                       "run this same command again")
-        sleep(min(poll_s, min(end, slice_end) - now))
+            return 6, "\n".join([(
+                f"release_run_still_running run_id={run_id} status={status} url={url} "
+                f"{max(0.0, end - now) / 60:.0f}min left of the run's {deadline_s / 60:g}min bound: "
+                "run this same command again"), *notes])
+        # During a hold the pause also ends at the hold's end, so the red is not
+        # reported a poll late.
+        sleep(min(poll_s, min(end, slice_end, hold_end) - now))
 
 
 def _bound(text: str) -> float:

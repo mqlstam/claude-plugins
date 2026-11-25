@@ -171,7 +171,10 @@ Before joining or tagging, read the newest health status for this exact SHA:
        and read the failing step from that file. A staging run that ends red on
        a job carrying RunsOn's `EC2 Spot interruption` annotation is rerun by
        RunsOn itself: await the same run id again; never dispatch or tag again
-       for it. A transient error (registry
+       for it. `await` follows that run into its next attempt by itself and
+       says so (`spot_interruption_rerun_expected`); `spot_interruption_no_rerun`
+       means RunsOn started none inside its bound, and the failed jobs are
+       rerun as a transient error is. A transient error (registry
        pull, token, runner) on a run this /deploy tagged is retried with
        `gh run rerun <id> --failed`, which its approval covers once; on a joined
        run this /deploy pushed nothing, so step 4 (a new tag) is the retry. A code
