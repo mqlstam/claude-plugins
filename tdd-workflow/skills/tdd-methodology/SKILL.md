@@ -109,7 +109,7 @@ Reach for it before reaching for another grep-shaped gate.
 | --------------------------- | -------------------------------------------------------------- |
 | `/feature <name> [--layers]`| New feature; single-agent build, proved on the real surface    |
 | `/refactor <name> [--layers]`| Refactor; ANALYZE fans out, the build does not                |
-| `/ship`                     | Land the PR the owner reviewed: that exact head; it ends at the merge (VERIFY opens the PR with its evidence) |
+| `/ship`                     | Land the PR the owner reviewed: that exact head; it ends at the merge (VERIFY opens the PR) |
 | `/quickship`                | Same local checks, push directly to main (through a PR and the merge queue where main requires one) |
 | `/merge`                    | Squash-merge an existing PR (directly, or through the merge queue) |
 | `/deploy`                   | Release main via a `deploy-*` tag — the only thing that deploys (Endoxia: to STAGING; production is `/promote`) |
@@ -122,11 +122,11 @@ Read the checkout's own `package.json`. VERIFY runs its pre-queue check beside
 the review (`pnpm precheck` when declared, else `ship:check`, else the generic
 checks: `skills/ship/pre-queue-check.md`); after a fix, the touched files' tests.
 Nothing is dispatched for a PR head. At READY, VERIFY opens the PR for review: it
-commits, pushes and attaches the evidence, and merges origin/main in only when
+commits and pushes, records nothing for the PR, and merges origin/main in only when
 GitHub reports a conflict; through the merge queue a clean or conflict-only
 integration runs no new check, because the queue's required check proves the merge
 result. /ship
-then lands exactly the PR head that evidence was recorded for. Integration alone does not re-arm VERIFY.
+then lands exactly the PR head its verdict covers. Integration alone does not re-arm VERIFY.
 
 Each worktree runs independently. Push, open the PR and squash-merge directly,
 matching its exact head; where main requires GitHub's merge queue

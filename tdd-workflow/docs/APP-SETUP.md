@@ -1,7 +1,7 @@
 # The agent's GitHub App: setup
 
-Why: the owner approves a change by approving its pull request on GitHub after
-watching its evidence there. GitHub refuses that for your own PR ("Pull request
+Why: the owner approves a change by approving its pull request on GitHub.
+GitHub refuses that for your own PR ("Pull request
 authors cannot approve their own pull requests"), and every PR used to be opened by
 the owner's account. So the agents open their PRs as a GitHub App, the owner
 reviews them, and the release gate reads that review when `/ship` merges
@@ -42,9 +42,9 @@ Facts below were read from docs.github.com on 2026-10-22; each step names its pa
    `gh run view` / `gh run list` (Actions), check runs and their annotations
    (Checks), commit statuses such as `endoxia/main-health`, environment variables
    such as staging's `PUBLIC_URL` (Environments), `gh workflow run` (Actions write),
-   and evidence uploads: gh uploads attachments only with a user token
+   and attachments: gh uploads them only with a user token
    (`internal/attachments/client.go` accepts `gho_`, `ghp_`, `github_pat_`, `ghu_`,
-   never an installation's `ghs_`), so `gh pr edit --attach` runs as you.
+   never an installation's `ghs_`), and the workflow attaches nothing to a PR.
 6. **Where can this GitHub App be installed?**: **Only on this account**. Then
    **Create GitHub App**.
 7. On the App's page note the **App ID** and the **Client ID** (they differ; the
@@ -150,5 +150,5 @@ is the approval. That is a text guard against an agent's mistake, like the rest 
 the gate, not a wall: the agents run with your own `gh` login, which can review.
 The hard version is an agent that holds no identity but the App's (which GitHub
 never lets approve its own PR): your `gh` login kept out of the agents' sessions,
-with merges, tags and evidence uploads moved to an identity that cannot review for
+with merges and tags moved to an identity that cannot review for
 you. Not done in 1.9.0.

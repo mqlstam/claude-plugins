@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Land the pull request the owner reviewed - check it is exactly the reviewed work with that review's evidence, integrate main if GitHub needs it, squash-merge that PR head (through GitHub's merge queue where main requires one). It ends when the PR is merged or queued: it deploys nothing and watches no release. Runs when the user types /ship, after /approve ship, when the owner approved the agent App's PR on GitHub, or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md). Opening the PR for review (phase 1) needs no approval and runs at the end of VERIFY.
+description: Land the pull request the owner reviewed - check it is exactly the reviewed work, integrate main if GitHub needs it, squash-merge that PR head (through GitHub's merge queue where main requires one). It ends when the PR is merged or queued: it deploys nothing and watches no release. Runs when the user types /ship, after /approve ship, when the owner approved the agent App's PR on GitHub, or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md). Opening the PR for review (phase 1) needs no approval and runs at the end of VERIFY.
 release-actions: merge
 argument-hint: "[PR title]"
 allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(date *), Bash(curl *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent-github-token.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_app.py *)
@@ -20,8 +20,8 @@ Stay on this branch; use a feature branch for /ship. Main uses /quickship.
 ## Two phases, one approval
 
 1. **Open for review**, `${CLAUDE_SKILL_DIR}/open-for-review.md`: commit, push the
-   branch, open or update the PR with the runtime evidence, link it
-   to the thread, tell the owner what to watch. Nothing merges, so it needs no
+   branch, open or update the PR, link it to the thread, tell the owner.
+   Nothing merges, so it needs no
    approval: VERIFY runs it at READY, in every chat that builds something.
 2. **Land**, the steps below: the merge. It needs the approval, and the builder's
    work ends there.
@@ -47,7 +47,7 @@ each need their own approval.
 - Changes requested, or comments with no approval on the head → read them
   (`gh pr view <PR> --comments`, and `gh api repos/:owner/:repo/pulls/<PR>/comments`
   for the line comments), fix in this chat, VERIFY the change as VERIFY step 4
-  says, then open for review again (it updates the PR and its evidence) and report.
+  says, then open for review again (it updates the PR) and report.
 - A failing check → read it (`gh pr checks <PR>`), fix what is this change's, report.
 Do not merge on a wake alone: the gate decides from the review, and so do you.
 
@@ -66,18 +66,16 @@ Do not merge on a wake alone: the gate decides from the review, and so do you.
    - **No open PR**, or uncommitted reviewed work, or `git rev-parse HEAD` is not
      `<SHA>`: the owner has not seen this. Open for review now
      (`${CLAUDE_SKILL_DIR}/open-for-review.md`). A change with nothing to observe
-     (its manifest says out of scope) then continues here. An observable one STOPS
-     after the report: the owner watches the evidence first. Their explicit go in
+     then continues here. An observable one STOPS after the report. Their explicit go in
      this chat (`/ship` again, or plainly saying to land it), or their approving
      review, lands it under this same approval, which is still unspent. A question
      or a change request is not a go: work it, and report again.
-   - **The head is the reviewed work, with that review's evidence:**
+   - **The head is the reviewed work:**
      `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py review-covers <PR>` must
      exit 0. Exit 1 says which: a commit came after the review (VERIFY it, as VERIFY
-     step 4 says), or the PR shows an earlier VERIFY's evidence. Either way say so
-     to the owner, open for review again so the PR shows the evidence of what
-     lands, and STOP: the owner watches it before it lands. Never land a head the
-     owner has not been shown.
+     step 4 says), or the PR carries an earlier verdict's marker. Either way say so
+     to the owner, open for review again so the PR carries the verdict of what
+     lands, and STOP. Never land a head no verdict covers.
 
 4. **Which landing path.** `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py mode`
    reads main's active rules on GitHub:
@@ -101,7 +99,7 @@ Do not merge on a wake alone: the gate decides from the review, and so do you.
    - `3` `DIRTY` / `BEHIND` → main must come in first: "Integrate main" below,
      then push the integration as open-for-review step 4 does and set `<SHA>` to
      it, run `review-covers <PR>` again, and wait again. A clean integration keeps
-     the verdict and its evidence. It is a new head, though, so an approval given
+     the verdict. It is a new head, though, so an approval given
      as a GitHub review no longer covers it: tell the owner the PR was brought up
      to date with main and needs their approval again (on GitHub, or `/ship`), and
      STOP. A typed approval covers it: go on.
@@ -230,9 +228,9 @@ merge is exactly git's clean merge of the reviewed work and main, and the verdic
 covers it without another review. Exit 1 names the paths a conflict resolution or
 a hook changed: give them and the contracts they touch a targeted correctness
 review, and once it is READY run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`.
-A new verdict means new evidence: record the runtime evidence for the resolved
-paths again (or name each flow NOT RUN with its reason) with the new `verdictId`, open
-for review again, and STOP for the owner; `review-covers` refuses the old manifest.
+A new verdict means a new marker: run the runtime criteria the resolved paths touch
+again (or name each flow NOT RUN with its reason), open for review again, and STOP
+for the owner; `review-covers` refuses the old marker.
 Substantive new feature work re-arms VERIFY fully.
 
 **Local validation.** The pre-queue check decides it

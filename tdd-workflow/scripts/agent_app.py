@@ -3,7 +3,7 @@
 Owner, 2026-10-22: the agents push branches and open pull requests as a GitHub App,
 so the owner can review them on GitHub (GitHub refuses a review of your own pull
 request, and every PR used to be authored by the owner's own account). The owner
-then approves a change by approving its pull request, after watching its evidence.
+then approves a change by approving its pull request.
 
 The machine opts in with a config file outside every repository, readable only by
 its owner (mode 600):

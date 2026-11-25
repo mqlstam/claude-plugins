@@ -1,5 +1,5 @@
 """Owner, 2026-10-22: the owner approves a change by approving its pull request on
-GitHub, after watching its evidence there. The release gate reads that review at the
+GitHub. The release gate reads that review at the
 moment of landing; `/approve ship` keeps working beside it."""
 import json
 import os

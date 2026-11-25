@@ -8,9 +8,10 @@ local validation:
 - **Correctness review**, always: a fresh context reads the diff against the slice,
   read-only, preferably on another model family.
 - **Runtime verification**, when the diff changes something a user or caller can
-  observe: the change is used on the worktree's own stack, with a recording of every
-  user flow. The owner approves the change by watching that recording on the PR
-  before it merges (owner, 2026-10-22), so it is required, not decoration.
+  observe: the change is used on the worktree's own stack, and the verifier reports
+  what it did and what it read. Nothing is recorded for the pull request (owner,
+  2026-11-25); a new or changed UI follows the project's rule for it (Endoxia:
+  `.claude/rules/browser-monitoring.md`, one short video to the owner by Slack).
 
 Agents run in the parent's checkout (no `isolation: "worktree"`; nested worktree
 isolation is known broken, Claude Code issues #47548 #27881 #50850 #39886 #41010).
@@ -54,24 +55,21 @@ view of the code.
 observable through a page, an API route, a job, a message, a mail, or what a model
 answers a user. A change with no observable effect (an internal refactor that moves no
 request path, persisted format or rendered surface; docs; tooling; a test helper) is
-out of scope: the manifest says so with its reason (`observable: false`,
-`outOfScope`), and the PR shows that line.
+out of scope, and the summary says so with its reason.
 
-Why this is spelled out: of the 15 user-visible PRs among the 40 merged before
-2026-10-22, 10 carried no recording. Evidence was optional: READY allowed runtime
-verification "skipped" on the author's own call, the verifier recorded only "when the
-criterion is a flow rather than a state", and no manifest was written for a change
-the author had ruled out. So the author ruled it out without a verifier ever running:
+Why this is spelled out: before 2026-10-22 READY allowed runtime verification
+"skipped" on the author's own call, and the author ruled it out without a verifier
+ever running:
 a provider cut "cannot be provoked locally" (after the same session had provoked it 4
 of 4 times), a chat change covered "by tests with a stubbed fetch", a removed feature
 recorded only as suite results. Hence:
 
 - **Hard to provoke, or covered by tests, is not out of scope.** The change is
   observable; the verifier tries, and what it cannot do is NOT RUN with its reason.
-- **A removal is observable:** record the surface without the removed thing.
+- **A removal is observable:** the verifier uses the surface without the removed thing.
 - **Name the user flows** from the slice before the verifier starts: each path a user
-  goes through to see the change, as the slice words it. Each one gets a recording, or
-  a NOT RUN reason; the manifest and `verify-state.py evidence` hold VERIFY to it.
+  goes through to see the change, as the slice words it. Each one is run, or is
+  NOT RUN with its reason.
 
 When it is in scope, **start the stack first, in the background**, with the profile
 that serves the touched paths: `/spinup` (`--full` for the heavy sidecars), or the
@@ -81,13 +79,7 @@ an image built before the change. Do it again after every fix, and record how
 freshness was established. An answering URL, or a HEAD that matches while changes are
 uncommitted, does not establish it. Never override the stack cap or stop another
 session's stack; at the cap, runtime verification is NOT RUN and the rest of VERIFY
-carries on, and the PR names each flow NOT RUN with that reason.
-
-**Empty the evidence directory** in every VERIFY, in scope or not:
-`.claude/verify-evidence/` unless the project names another (inside the checkout,
-ignored by git). It holds this VERIFY's screenshots, recordings and manifest only,
-round N under `r<N>/`; an earlier VERIFY's files would otherwise reach the pull
-request as if they were this change's.
+carries on, and the summary names each flow NOT RUN with that reason.
 
 ## Step 2 - launch in one message
 
@@ -126,12 +118,11 @@ request as if they were this change's.
 
 **b. Runtime verification**, when in scope: the `runtime-verifier` agent with
 `model: "opus"`. Give it the slice, the base, the stack URL, the profile, the
-services that profile leaves out, how each changed service was made to run the
-current code, and the round's evidence directory (`.claude/verify-evidence/r1/`). It
-drives the harness's built-in browser when there is one (in T3 Code the `preview_*`
-tools, a private profile, its own tab) and the project's browser tooling otherwise,
-and saves a screenshot per verified criterion and one short recording per user flow
-you named. Give it the list of flows. Launch it as soon as the stack answers and runs
+services that profile leaves out, and how each changed service was made to run the
+current code. It drives the harness's built-in browser when there is one (in T3 Code
+the `preview_*` tools, a private profile, its own tab) and the project's browser
+tooling otherwise, and reports per criterion what it did and what it read; it keeps
+no screenshot or recording. Give it the list of flows. Launch it as soon as the stack answers and runs
 that code. Do not hold the review back for the stack.
 
 **c. Local validation**, in the background, on the current tree: the pre-queue check,
@@ -153,8 +144,14 @@ external wait with nothing local to wake it.
 
 ## Step 3 - judge the findings
 
-You are the author. Read every finding against the code. The review's **Coverage**
-says what it read; a gap there is yours to weigh and never buys a round by itself.
+You are the author. First compare the review's **Coverage** with the change and with
+the scopes of the project's rules. An applicable rule it did not read, a changed file
+it did not read, or a criterion without a traced production path makes the review
+incomplete: send one more round for exactly what it skipped before you rely on its
+verdict. Coverage adds up across rounds: earlier coverage stands for paths and
+contracts the fixes did not touch, so a follow-up round needs coverage only of its
+delta and of what that delta affects. Pass the previous Coverage with the follow-up
+context. Then read every finding against the code.
 
 - **Real:** fix it. It gets a regression test, at the boundary that owns the
   behaviour, only where the defect can come back and nothing else would catch it.
@@ -165,30 +162,30 @@ says what it read; a gap there is yours to weigh and never buys a round by itsel
 
 ## Step 4 - re-check only what changed
 
-The review is sized to the change (owner, 2026-11-25): one full round by the other
-model family on a production-code change, three rounds at most.
-
-- **After a substantive fix:** one targeted verifier on the fix: a new
-  `delegate_task` call (new `clientRequestId`) or a new agent, carrying the original
-  brief, the slice, the base, the previous findings, your response to each, and the
-  diff since the previous round. It reads the changed hunks only. Substantive is
-  judged by what the change can reach, not by its length: one line in authorization,
-  persistence order, concurrency or workflow history is substantive.
-- **After a docs, test, comment or wording change:** none.
+- **After a substantive product-code fix, whichever lane found it,** get a targeted
+  correctness review of the fix and the callers it affects: a new `delegate_task` call
+  (new `clientRequestId`) or a new agent, carrying the original brief, the slice, the
+  base, the previous findings, your response to each, and the diff since the previous
+  round. A fix to a runtime finding can introduce the race the runtime re-check does
+  not exercise.
+- **Judge "trivial" by what the change can reach, not by its length.** A one-line
+  change to authorization, persistence order, concurrency or workflow history is
+  substantive.
+- **After a docs, test, comment or wording change:** no review round.
 - **Across a merge of main the verdict carries** when the reviewed diff is unchanged:
   `git diff $(git merge-base HEAD origin/main) HEAD | git patch-id --stable` gives the
   same id before and after.
 - **Re-run the runtime criteria** whose implementation or prerequisites a fix
-  changed, on a stack running the fixed code, with the next round's evidence
-  directory (`r2/`, `r3/`). A criterion's evidence is the newest round's that ran it.
+  changed, on a stack running the fixed code. A criterion's result is the newest
+  round's that ran it.
 - **After a fix, run the touched files' tests,** with the project's per-file test
   command. The pre-queue check does not run again: the merge queue proves the head.
 
 ## Step 5 - verdict
 
 - **READY**: the review has no open blocker or major finding. For an observable
-  change, runtime verification is READY with a recording of every user flow, or names
-  each flow it could not record NOT RUN with its reason; for a change with nothing to
+  change, runtime verification is READY for every user flow, or names each flow it
+  could not run NOT RUN with its reason; for a change with nothing to
   observe, the reason it is out of scope is stated. Local validation exited `0` on the
   final tree.
 - **NEEDS_FIX**: a real blocker or major finding is open, or validation failed (exit
@@ -208,11 +205,7 @@ it; the project's session-end and idle hooks soft-stop it once no live session n
 it, which a stop from inside one session cannot know.
 
 - **READY** -> run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`
-  first, then `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py verdict-id`;
-  write the evidence manifest (below), for every change, naming that `verdictId`;
-  then `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py evidence` must exit 0
-  (a flow without its recording or reason, or evidence of an earlier verdict, is a
-  VERIFY that is not done). `record` `.claude/.verify-state.json` with the verdict bound to the exact contents
+  first. `record` writes `.claude/.verify-state.json` with the verdict bound to the exact contents
   reviewed: every tracked and untracked, non-ignored file, by mode and blob id.
   `/ship`, `/quickship` and `/merge` run `verify-state.py check` before merging main
   and committing; committing the reviewed work keeps the verdict, and any other
@@ -225,59 +218,16 @@ it, which a stop from inside one session cannot know.
 
   **Then open the PR for review, in this chat, without asking:**
   `${CLAUDE_PLUGIN_ROOT}/skills/ship/open-for-review.md`. It commits,
-  pushes the branch, opens (or updates) the PR with the evidence, links it to the
-  thread, watches it, and tells the owner in one short message the PR URL and what to
-  watch. Nothing merges, so it needs no approval. The owner approves on GitHub or
-  types `/ship`; changes they ask for are fixed here, VERIFY runs again for them
-  (step 4), and opening for review again updates the PR and its evidence. Tell the
-  owner, in that same message, what was fixed, what you rejected and why, and
-  anything NOT RUN.
+  pushes the branch, opens (or updates) the PR, links it to the thread, watches it,
+  and tells the owner the PR URL in one short message. Nothing merges, so it needs no
+  approval. The owner approves on GitHub or types `/ship`; changes they ask for are
+  fixed here, VERIFY runs again for them (step 4), and opening for review again
+  updates the PR. Tell the owner, in that same message, what was fixed, what you
+  rejected and why, and anything NOT RUN.
+
+  **A new or changed UI** (something a person sees or presses is new or different):
+  follow the project's rule for a new or changed UI (Endoxia:
+  `.claude/rules/browser-monitoring.md`, one short video to the owner by Slack).
+  A change with no visible difference sends nothing.
 - **NEEDS_FIX** -> fix in this chat, then step 4.
 - **BLOCKED** -> surface it to the user. Do not ship.
-
-### The evidence manifest
-
-The verdict's screenshots and recordings, for the pull request the owner reviews.
-Write `.claude/verify-evidence/manifest.json` (the evidence directory's root) at every
-READY, from the verifier reports' evidence lines, keeping for each criterion the newest
-round that ran it:
-
-```json
-{
-  "verdict": "READY",
-  "verdictId": "<what verify-state.py verdict-id prints>",
-  "recordedAt": "<ISO 8601 time>",
-  "slice": "<slice doc path or task>",
-  "observable": true,
-  "outOfScope": "",
-  "flows": ["<user flow, as the slice words it>", "<another user flow>"],
-  "items": [
-    {
-      "path": ".claude/verify-evidence/r1/01-sign-in.png",
-      "kind": "screenshot",
-      "criterion": "<the acceptance criterion, as the slice words it>",
-      "caption": "<one sentence: what the reader sees>"
-    },
-    {
-      "path": ".claude/verify-evidence/r2/02-upload-flow.mp4",
-      "kind": "recording",
-      "criterion": "<criterion>",
-      "flow": "<user flow, as the slice words it>",
-      "caption": "<sentence>"
-    }
-  ],
-  "notRun": [{ "criterion": "<another user flow>", "reason": "<the missing service or reason>" }]
-}
-```
-
-Paths are relative to the checkout, inside the evidence directory, ignored by git,
-and every one must exist. `kind` is `screenshot` or `recording`; a recording names the
-`flow` it shows. Every entry of `flows` has a recording, or a `notRun` entry whose
-`criterion` is that flow, with its reason. A criterion runtime verification did not run
-goes under `notRun` with its reason, so the pull request shows it beside the evidence;
-NOT RUN is never a pass there either. A change with no observable effect writes
-`"observable": false`, its reason in `outOfScope`, and no flows or items.
-`verdictId` binds the evidence to the verdict: a new verdict (a fix reviewed again,
-a conflict resolved while landing) needs its own recordings, or each flow named
-NOT RUN with its reason, before the PR can show it. `verify-state.py evidence`,
-`review-marker` and `review-covers` check all of this.
