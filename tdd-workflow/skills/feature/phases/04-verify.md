@@ -144,14 +144,9 @@ external wait with nothing local to wake it.
 
 ## Step 3 - judge the findings
 
-You are the author. First compare the review's **Coverage** with the change and with
-the scopes of the project's rules. An applicable rule it did not read, a changed file
-it did not read, or a criterion without a traced production path makes the review
-incomplete: send one more round for exactly what it skipped before you rely on its
-verdict. Coverage adds up across rounds: earlier coverage stands for paths and
-contracts the fixes did not touch, so a follow-up round needs coverage only of its
-delta and of what that delta affects. Pass the previous Coverage with the follow-up
-context. Then read every finding against the code.
+You are the author. Read every finding against the code; a finding counts only with
+a concrete failure scenario. The review's **Coverage** says what it read; a gap
+there is yours to weigh and buys no round.
 
 - **Real:** fix it. It gets a regression test, at the boundary that owns the
   behaviour, only where the defect can come back and nothing else would catch it.
@@ -162,16 +157,18 @@ context. Then read every finding against the code.
 
 ## Step 4 - re-check only what changed
 
-- **After a substantive product-code fix, whichever lane found it,** get a targeted
-  correctness review of the fix and the callers it affects: a new `delegate_task` call
-  (new `clientRequestId`) or a new agent, carrying the original brief, the slice, the
-  base, the previous findings, your response to each, and the diff since the previous
-  round. A fix to a runtime finding can introduce the race the runtime re-check does
-  not exercise.
-- **Judge "trivial" by what the change can reach, not by its length.** A one-line
-  change to authorization, persistence order, concurrency or workflow history is
-  substantive.
-- **After a docs, test, comment or wording change:** no review round.
+The review is sized to the change (owner, 2026-11-25): one full round by the other
+model family on a production-code change.
+
+- **After each fix:** one targeted check of the changed hunks: a new `delegate_task`
+  call (new `clientRequestId`) or a new agent, carrying the original brief, the slice,
+  the base, the previous findings, your response to each, and the diff since the
+  previous round.
+- **A second full round** only when round 1 found a real defect in production code.
+  Never a third.
+- **After a docs, test, comment or wording change:** no review round. What counts is
+  what the change can reach, not its length: one line in authorization, persistence
+  order, concurrency or workflow history is production code.
 - **Across a merge of main the verdict carries** when the reviewed diff is unchanged:
   `git diff $(git merge-base HEAD origin/main) HEAD | git patch-id --stable` gives the
   same id before and after.

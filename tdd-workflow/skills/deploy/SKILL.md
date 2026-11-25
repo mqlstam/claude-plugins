@@ -168,7 +168,10 @@ Before joining or tagging, read the newest health status for this exact SHA:
        fixed; then `gh run rerun <id> --failed`, which this approval covers once.
      - `reason=job-failure …` → name the failed job, its step and the first
        annotation. For more, `gh run view <id> --log-failed > /tmp/deploy-<id>.log 2>&1`
-       and read the failing step from that file. A transient error (registry
+       and read the failing step from that file. A staging run that ends red on
+       a job carrying RunsOn's `EC2 Spot interruption` annotation is rerun by
+       RunsOn itself: await the same run id again; never dispatch or tag again
+       for it. A transient error (registry
        pull, token, runner) on a run this /deploy tagged is retried with
        `gh run rerun <id> --failed`, which its approval covers once; on a joined
        run this /deploy pushed nothing, so step 4 (a new tag) is the retry. A code
