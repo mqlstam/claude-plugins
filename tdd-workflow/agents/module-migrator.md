@@ -105,7 +105,8 @@ selects what your changes reach.
 ## Rules
 
 1. **ONLY touch your assigned module** - Don't edit other modules
-2. **Run the test files you changed** - Verify nothing broke
+2. **Run the test files you changed** - Verify nothing broke; the brief's bar is the
+   whole bar, so add no test, check or proof above it
 3. **Document every change** - File, line, what changed
 4. **Report completion** - So other migrators can continue
 5. **Don't delete old code** - That's done after ALL modules migrate

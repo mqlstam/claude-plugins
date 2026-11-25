@@ -89,7 +89,8 @@ missing service. It is never a FAIL, and never a pass.
 ## Limits
 
 - Do not change product code or tests, and do not fix what you find. Report it with
-  steps to reproduce. The author then writes the failing test, then the fix.
+  steps to reproduce. The author fixes it, with a regression test only where the
+  defect can come back and nothing else would catch it.
 - Do not write a permanent end-to-end spec unless the parent asks for one.
 - Data you create stays in the worktree's own database, under test identities.
 - Never sleep-poll. Run a long wait in the background and wait for its notification.

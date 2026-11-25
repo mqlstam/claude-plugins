@@ -10,7 +10,7 @@ Launch ALL four analyzers IN PARALLEL in a single message:
 |-------|------|
 | `dependency-mapper` | Map what the target depends on (imports, services, DB) |
 | `caller-finder` | Find all code that uses/calls the target |
-| `test-scanner` | Find existing test coverage for the target |
+| `test-scanner` | Find which behaviour of the target an existing test already holds |
 | `impact-assessor` | Identify affected layers and modules |
 
 ## Steps
@@ -19,7 +19,7 @@ Launch ALL four analyzers IN PARALLEL in a single message:
 3. Merge results into a refactoring plan:
    - Dependencies mapped
    - Callers identified
-   - Test coverage known
+   - What already holds the behaviour being moved (tests, types), and the gaps
    - Affected layers and modules identified
    - Parallelization opportunities noted
 

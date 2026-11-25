@@ -1,8 +1,9 @@
 ---
 name: feature
 description: >-
-  Start a TDD feature workflow. Default is a single-agent build: tests and
-  implementation together against the slice's acceptance criteria, then VERIFY. Pass --layers to fan out per-layer builders. Use when the user
+  Start a feature workflow. Default is a single-agent build against the slice's
+  acceptance criteria, proved by a run on the real surface; a test only when the brief
+  asks or the fault has a cheap local target; then VERIFY. Pass --layers to fan out per-layer builders. Use when the user
   wants to build a new feature, add functionality, or implement a vertical slice.
 argument-hint: <feature-name> [--layers]
 ---
@@ -14,8 +15,8 @@ argument-hint: <feature-name> [--layers]
 **Workspace:** Stay on the current branch — never `git checkout`, `git switch`, `git checkout -b`, `git stash`, or create branches. The user picks the workspace (worktree, feature branch, or main) at session start; the skill must respect that choice.
 
 1. **Read the slice doc** (`docs/slices/{NN}-{name}.md` or the equivalent) for scope
-   and acceptance criteria. The acceptance criteria are what the tests assert; without
-   them you are guessing at the contract.
+   and acceptance criteria. The acceptance criteria are the contract; without them
+   you are guessing at it.
 2. Create tasks for tracking — one per phase.
 3. **Read the real docs before building**, for every library, SDK, provider API or tool
    the slice touches:
@@ -41,19 +42,14 @@ argument-hint: <feature-name> [--layers]
 
 ## Build shape — single agent by default
 
-**Default: ONE agent (you) writes the tests and the implementation together**, working
-through the slice's acceptance criteria. Not a red-green ceremony per layer, and not a
-fan-out of per-layer builders.
+**Default: ONE agent (you) builds the slice**, working through its acceptance
+criteria. Not a red-green ceremony per layer, and not a fan-out of per-layer builders.
 
 This is a measured position, not a preference. A controlled study plus this user's own
 session data (**8-10× the token volume, 46 sub-agents in a session against 1**) found
 no quality gain from rigid red-green sequencing or from per-layer builder agents. What
-does earn its cost is: **tests as the contract** and **VERIFY**. Those are kept, in
-full.
-
-So write the test and the code for a behaviour together, at whatever granularity the
-behaviour actually has. Keep the test honest — it asserts the acceptance criterion,
-not the implementation you just wrote.
+does earn its cost is **a run on the real surface** and **VERIFY**; a test is optional
+("The bar, and which tests", below).
 
 ### `--layers` — opt in when the slice genuinely spans independent surfaces
 
@@ -74,19 +70,32 @@ If the layers depend on each other — the usual case for a vertical slice — t
 costs a multiple of the tokens to produce a handoff you then have to reconcile. Build
 it yourself.
 
-## Which tests
+## The bar, and which tests
 
-Name the failure modes this change has, and prove those against the real thing:
-real inputs through the real code to an asserted output, row, response or rendered
-state. A test earns its place by a plausible product or operations bug that turns it
-red. A test that would pass with and without the change proves nothing.
+**The bar in your brief is the whole bar.** Add no test, check, pin, gate, proof or
+review round above it. With no bar stated: the change is no worse than its base and
+its own tests pass. Hold or block only for a failing run at this head or a fault a
+user would hit.
+
+**A test is optional.** Write one only when the brief asks for it or the fault has an
+obvious, cheap, local test target, and then by the keep rule: a test stays only if it
+catches a failure that (1) can really happen, (2) hurts when it does, and (3) is not
+already caught elsewhere or cheaper elsewhere: another test, the model e2e runs,
+staging's roll and probe, the gate before production. Everything else is deleted, not
+moved or quarantined. Name the failure a test catches in its title. No new test is
+better than a bad test.
+
+**The default proof of a change is a run on the real surface**: the worktree's stack,
+the route, the command. File mtimes, self-reports, cached output and "it compiles"
+are not proof. A test you find that still passes when the behaviour it checks is
+broken is fixed or deleted.
 
 ## Phases
 
 | # | Phase  | What happens                                             | Details                                     |
 |---|--------|----------------------------------------------------------|---------------------------------------------|
 | 1 | SPEC   | Types, API contract, acceptance criteria from the slice  | [phases/01-spec.md](phases/01-spec.md)      |
-| 2 | BUILD  | Tests + implementation together (or `--layers` fan-out)  | [phases/02-build.md](phases/02-build.md)    |
+| 2 | BUILD  | The implementation, run on the real surface              | [phases/02-build.md](phases/02-build.md)    |
 | 3 | WIRE   | Connect layers, add routing                              | [phases/03-wire.md](phases/03-wire.md)      |
 | 4 | VERIFY | Independent review + runtime check, beside local checks  | [phases/04-verify.md](phases/04-verify.md)  |
 

@@ -1,26 +1,27 @@
 # Phase 2: BUILD
 
 ## Goal
-Implement the slice's acceptance criteria, with tests that hold them.
+Implement the slice's acceptance criteria.
 
-## Default: one agent, tests and implementation together
+## Default: one agent builds the slice
 
-Work through the acceptance criteria from the slice doc. For each behaviour, write the
-test and the code together, at the granularity the behaviour actually has. The test
-asserts the **acceptance criterion**, not the shape of the implementation you just
-wrote — if you cannot state what the test would catch, it is not a test yet.
+Work through the acceptance criteria from the slice doc, at the granularity the
+behaviour actually has, and run each on the real surface. The feature skill's "The
+bar, and which tests" decides whether a test is written; none is the default.
 
 This replaces the per-layer builder fan-out and the per-layer RED→GREEN ceremony. Both
 were measured and neither paid: a controlled study plus this user's own session data
 (**8-10× the token volume, 46 sub-agents in a session against 1**) found no quality
-gain from rigid red-green sequencing or per-layer builders. What earns its cost is
-tests-as-contract and VERIFY — both kept.
+gain from rigid red-green sequencing or per-layer builders. What earns its cost is a
+run on the real surface, and VERIFY.
 
 Practical shape:
 
 1. Read the slice's acceptance criteria. List them.
-2. For each: write the assertion, write the code, run that test file only.
-3. When they all pass, run the test files you touched and the direct tests of the
+2. For each: write the code and run it on the real surface (the route, the command,
+   the worktree's stack); a test only when the brief asks or the fault has an obvious,
+   cheap, local target.
+3. When it is built, run the test files you touched and the direct tests of the
    modules you changed, nothing wider, with the project's per-file test command (its
    own rule names it; Endoxia: `pnpm --filter <pkg> test <file>…`). Check that the
    output names your files: a repository-root `vitest run <file>` can match no test
@@ -47,15 +48,8 @@ Then reconcile their output and run the test files they touched, as in step 3. I
 find yourself merging their assumptions by hand, the layers were not independent and
 the fan-out was the wrong call — say so, and finish it yourself.
 
-## Which tests
-
-Name the failure modes this change has, and prove those against the real thing:
-real inputs through the real code to an asserted output, row, response or rendered
-state. A test earns its place by a plausible product or operations bug that turns it
-red. A test that would pass with and without the change proves nothing.
-
 ## Completion
 
-- Every acceptance criterion has a test that asserts it
+- Every acceptance criterion is met, shown by a run on the real surface
 - The test files you touched pass (VERIFY's pre-queue check runs what they reach)
 - Mark build task completed; move to WIRE

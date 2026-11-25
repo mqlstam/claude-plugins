@@ -1,34 +1,29 @@
-# Phase 2: TEST (Parallel by layer)
+# Phase 2: TEST (only the gaps)
 
 ## Goal
-Write tests for the NEW structure before implementing it. Tests must FAIL (RED).
-
-## Agent
-Use `refactor-test-writer` — one per affected layer, launched in parallel if multiple layers.
+Before anything moves, make sure the behaviour the callers rely on is held. Most of it
+already is: by an existing test (ANALYZE's `test-scanner` named them) or by the type
+system. This phase writes a characterization test only for what neither holds.
 
 ## Steps
-1. For each affected layer, launch a test writer in parallel:
-   ```
-   refactor-test-writer → "Write tests for {layer} layer - target: {refactoring target}"
-   ```
+1. From the plan, list the behaviour being moved that the callers rely on.
+2. For each, name what holds it: an existing test, a type, a later stage (the model e2e
+   runs, staging, the gate before production). That behaviour needs nothing new.
+3. For what nothing holds, ask the refactor skill's "The bar, and which tests": does
+   the brief ask for a test, or is there an obvious, cheap, local target, and can the
+   refactor really break it in a way that hurts? Only then write a characterization
+   test: through the real code, green on the OLD structure, with the failure it
+   catches in its title. Otherwise the proof is a run of the moved path on the real
+   surface, before and after.
+4. Run only the test files you wrote, with the project's per-file test command
+   (Endoxia: `pnpm --filter <pkg> test <file>`). They pass now and must still pass
+   after the refactor. The output must name them: a command that matches no test
+   exits 0.
 
-   Example with 3 layers:
-   ```
-   refactor-test-writer → "Write tests for service layer - new AuthService API"
-   refactor-test-writer → "Write tests for route layer - new auth endpoints"
-   refactor-test-writer → "Write tests for hook layer - new useAuth hook"
-   ```
-
-2. Each test writer:
-   - Writes tests for the NEW structure (not the old one)
-   - Runs only the test files it wrote, with the project's per-file test command
-     (Endoxia: `pnpm --filter <pkg> test <file>`) — they must FAIL (RED state), and
-     the output must name them: a command that matches no test exits 0
-   - Reports RED confirmation
-
-3. Wait for ALL test writers to report RED
+With `--layers`, launch one `refactor-test-writer` per layer that has a gap, in a single
+message, each told the gap it closes. A layer without a gap gets no test writer.
 
 ## Completion
-- Tests written for all affected layers
-- All tests confirmed FAILING (RED)
+- Every behaviour being moved is held by something you can name
+- New tests exist only for the gaps; a phase that wrote none is complete
 - Mark test task as completed, move to REFACTOR phase

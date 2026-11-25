@@ -1,8 +1,9 @@
 ---
 name: refactor
 description: >-
-  Start a TDD refactoring workflow. Default is a single-agent build: characterization
-  tests and the migration together, then VERIFY. Pass --layers to
+  Start a refactoring workflow. Default is a single-agent build: the migration, with a
+  characterization test only where no existing test and no type holds the behaviour
+  being moved, then VERIFY. Pass --layers to
   fan out per-layer test writers and module migrators. Use when the user wants to
   refactor, restructure, extract, or reorganize existing code.
 argument-hint: <target> [--layers]
@@ -32,13 +33,13 @@ argument-hint: <target> [--layers]
 
 ## Build shape — single agent by default
 
-**Default: ONE agent (you) writes the characterization tests and performs the migration**,
-module by module. Not a per-layer test-writer fan-out, and not a per-module migrator fan-out.
+**Default: ONE agent (you) performs the migration**, module by module, and writes a
+characterization test only where "The bar, and which tests" below asks for one. Not a per-layer test-writer fan-out, and not a per-module migrator fan-out.
 
 Measured position, not preference: a controlled study plus this user's own session data
 (**8-10× the token volume, 46 sub-agents in a session against 1**) found no quality gain
-from rigid red-green sequencing or per-layer builder agents. What earns its cost —
-tests as the contract and VERIFY — is kept in full.
+from rigid red-green sequencing or per-layer builder agents. What earns its cost is a
+run on the real surface, and VERIFY.
 
 The ANALYZE fan-out is different and stays: `dependency-mapper`, `caller-finder`,
 `test-scanner` and `impact-assessor` are **read-only searches over disjoint questions**,
@@ -53,13 +54,31 @@ files and can be migrated without reading each other's output. Then fan out
 and reconcile. If you end up merging their assumptions by hand, they were not
 independent — finish it yourself and say so.
 
-## Which tests
+## The bar, and which tests
 
-Name the failure modes this refactor could introduce (a caller that now sees other
-behaviour, a persisted format that moved, a path that no longer runs), and prove those
-against the real thing: the characterization tests hold the behaviour the callers
-rely on, through the real code. A test earns its place by a plausible product or
-operations bug that turns it red.
+**The bar in your brief is the whole bar.** Add no test, check, pin, gate, proof or
+review round above it. With no bar stated: the change is no worse than its base and
+its own tests pass. Hold or block only for a failing run at this head or a fault a
+user would hit.
+
+**A test is optional.** Write one only when the brief asks for it or the fault has an
+obvious, cheap, local test target, and then by the keep rule: a test stays only if it
+catches a failure that (1) can really happen, (2) hurts when it does, and (3) is not
+already caught elsewhere or cheaper elsewhere: another test, the model e2e runs,
+staging's roll and probe, the gate before production. Everything else is deleted, not
+moved or quarantined. Name the failure a test catches in its title. No new test is
+better than a bad test.
+
+**The default proof of a change is a run on the real surface**: the worktree's stack,
+the route, the command. File mtimes, self-reports, cached output and "it compiles"
+are not proof. A test you find that still passes when the behaviour it checks is
+broken is fixed or deleted.
+
+For a refactor the faults are a caller that now sees other behaviour, a persisted
+format that moved, a path that no longer runs. ANALYZE's `test-scanner` says which an
+existing test already holds, and the type system holds the signatures. A
+characterization test is written only where neither holds the behaviour being moved:
+green on the old structure, unchanged after. A test of the old internals goes with them.
 
 ## Parallelism overview
 
@@ -69,7 +88,7 @@ Phase 1: ANALYZE ──┬── dependency-mapper ──┐
                    ├── test-scanner ───────┤
                    └── impact-assessor ────┘
 
-Phase 2: TEST  ─── single agent (--layers to fan out)
+Phase 2: TEST  ─── single agent; only the gaps (--layers to fan out)
 Phase 3: REFACTOR ─ sequential (dependencies)
 Phase 4: MIGRATE ── single agent (--layers to fan out)
 
@@ -81,7 +100,7 @@ Phase 5: VERIFY ─── the feature workflow's VERIFY, told what the refactor 
 | # | Phase    | Parallel?                    | Details                                       |
 |---|----------|------------------------------|-----------------------------------------------|
 | 1 | ANALYZE  | Always (4 read-only agents)  | [phases/01-analyze.md](phases/01-analyze.md)  |
-| 2 | TEST     | Only with `--layers`         | [phases/02-test.md](phases/02-test.md)        |
+| 2 | TEST     | Only with `--layers`; may be empty | [phases/02-test.md](phases/02-test.md)        |
 | 3 | REFACTOR | Never                        | [phases/03-refactor.md](phases/03-refactor.md)|
 | 4 | MIGRATE  | Only with `--layers`         | [phases/04-migrate.md](phases/04-migrate.md)  |
 | 5 | VERIFY   | Review + runtime check       | [phases/05-verify.md](phases/05-verify.md)    |

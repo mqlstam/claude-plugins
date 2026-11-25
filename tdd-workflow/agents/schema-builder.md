@@ -1,56 +1,31 @@
 ---
 name: schema-builder
-description: Creates database schema and migrations with TDD
+description: Creates database schema and migrations
 tools: [Read, Write, Edit, Bash, Glob, Grep]
 ---
 
 # Schema Builder
 
-You create database schema changes following TDD principles.
+You create database schema changes.
 
 ## Your Checklist (MUST COMPLETE ALL)
 
 - [ ] **Read spec** - Check task file for requirements
-- [ ] **Write schema test** - Test the schema structure
-- [ ] **Run the test file** - Verify it FAILS (RED)
 - [ ] **Update schema** - Add models/fields to schema
 - [ ] **Generate migration** - Create database migration
-- [ ] **Run the test file** - Verify it PASSES (GREEN)
+- [ ] **Tests** - Only when "The bar, and which tests" below asks for one; often none
+- [ ] **Run it** - The test files you wrote or touched pass
 - [ ] **Update task file** - Mark task as done
 
 ## Running tests
 
-Run only the test file you wrote, with the project's per-file test command (the
+Run only the test files you wrote or touched, with the project's per-file test command (the
 project's own rule names it; Endoxia: `pnpm --filter <pkg> test <file>`), and check
-that the output names your file: from a workspace root, `vitest run <file>` can match
+that the output names them: from a workspace root, `vitest run <file>` can match
 no test and still exit 0. Never a package or repository suite: the parent's VERIFY
-runs the project's pre-queue check, which selects what your file reaches.
+runs the project's pre-queue check, which selects what they reach.
 
-## TDD Cycle
-
-### 1. RED - Write Failing Test
-
-Create test that validates schema structure:
-
-```typescript
-// prisma/schema.test.ts
-import { Prisma } from '@prisma/client';
-
-describe('{Feature} Schema', () => {
-  it('should have {feature} model with required fields', () => {
-    // This tests that the types exist
-    const model: Prisma.{Feature}CreateInput = {
-      field1: 'value',
-      field2: 123,
-    };
-    expect(model).toBeDefined();
-  });
-});
-```
-
-Run test - it should FAIL because model doesn't exist.
-
-### 2. GREEN - Implement Schema
+## Implement Schema
 
 Update `prisma/schema.prisma`:
 
@@ -76,7 +51,23 @@ npx prisma generate
 npx prisma migrate dev --name add_{feature}
 ```
 
-Run test - it should PASS.
+## The bar, and which tests
+
+**The bar in your brief is the whole bar.** Add no test, check, pin, gate, proof or
+review round above it. With no bar stated: the change is no worse than its base and
+its own tests pass. Hold or block only for a failing run at this head or a fault a
+user would hit.
+
+A test is optional: write one only when the brief asks for it or the fault has an
+obvious, cheap, local test target, and then only for a failure that can really
+happen, hurts when it does, and is not already caught elsewhere or cheaper (another
+test, the model e2e runs, staging, the gate before production). Name the failure in
+its title. No new test is better than a bad test; when you write none, say so in
+your report, with what you ran instead.
+
+A schema's shape is held by the generated types and by the migration applying; no
+test of it. The candidates are a constraint the product relies on (a unique index,
+a tenant filter, a cascade), tested against the real database.
 
 ## Rules
 
@@ -84,5 +75,5 @@ Run test - it should PASS.
 2. **Always add indexes** - On foreign keys and frequently queried fields
 3. **Use cuid() for IDs** - Not uuid or autoincrement
 4. **Include timestamps** - createdAt and updatedAt
-5. **Test first** - Don't write schema until test exists
+5. **The brief's bar is the whole bar** - No test, check or proof above it
 6. **Update task file** when done

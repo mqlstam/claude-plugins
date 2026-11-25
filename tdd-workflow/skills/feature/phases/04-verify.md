@@ -162,28 +162,32 @@ contracts the fixes did not touch, so a follow-up round needs coverage only of i
 delta and of what that delta affects. Pass the previous Coverage with the follow-up
 context. Then read every finding against the code.
 
-- **Real:** fix it. A defect found by running the app first gets a failing regression
-  test at the boundary that owns the behaviour; then the fix.
+- **Real:** fix it. It gets a regression test, at the boundary that owns the
+  behaviour, only where the defect can come back and nothing else would catch it.
 - **Not real:** reject it with a one-line reason (the scenario cannot occur because
   ...). Keep the reason for the summary and for the next round.
-- **Style or speculation:** do not act on it.
+- **Style, naming, structure or speculation:** do not act on it. Hold or block only
+  for a failing run at this head or a fault a user would hit.
 
 ## Step 4 - re-check only what changed
 
-- **After a substantive product-code fix, whichever lane found it,** get a targeted
-  correctness review of the fix and the callers it affects: a new `delegate_task` call
-  (new `clientRequestId`) or a new agent, carrying the original brief, the slice, the
-  base, the previous findings, your response to each, and the diff since the previous
-  round. A fix to a runtime finding can introduce the race the runtime re-check does
-  not exercise.
-- **Re-run the runtime criteria** whose implementation or prerequisites the fix
+The review is sized to the change: one full independent review, then at most two
+re-checks (three rounds in all).
+
+- **After a fix, or a merge of main resolved by hand:** one re-check of the changed
+  hunks only: a new `delegate_task` call (new `clientRequestId`) or a new agent,
+  carrying the original brief, the slice, the base, the previous findings, your
+  response to each, and the diff since the previous round.
+- **After a wording-only change** (a message string, a comment, a doc): none. Judge
+  that by what the change can reach, not by its length: one line in authorization,
+  persistence order, concurrency or workflow history is a fix.
+- **Across a rebase or a merge of main the verdict carries** when the change's own
+  diff is unchanged: `git diff $(git merge-base HEAD origin/main) HEAD | git patch-id --stable`
+  gives the same id before and after.
+- **Re-run the runtime criteria** whose implementation or prerequisites a fix
   changed, on a stack running the fixed code, with the next round's evidence
   directory (`r2/`, `r3/`). A criterion's evidence is the newest round's that ran it.
-- **Judge "trivial" by what the change can reach, not by its length.** A one-line
-  change to authorization, persistence order, concurrency or workflow history is
-  substantive. Only a fix that cannot change behaviour (a message string, a comment)
-  skips the review.
-- **Either way,** the pre-queue check runs again on the final tree: a fix is a new
+- **After a fix,** the pre-queue check runs again on the final tree: a fix is a new
   head of author work (`pre-queue-check.md` section 2).
 
 ## Step 5 - verdict

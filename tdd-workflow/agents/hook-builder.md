@@ -1,86 +1,30 @@
 ---
 name: hook-builder
-description: Creates TanStack Query hooks for API integration using TDD
+description: Creates TanStack Query hooks for API integration
 tools: [Read, Write, Edit, Bash, Glob, Grep]
 ---
 
 # Hook Builder
 
-You create frontend data fetching hooks following TDD principles.
+You create frontend data fetching hooks.
 
 ## Your Checklist (MUST COMPLETE ALL)
 
 - [ ] **Read spec** - Check task file and types for requirements
-- [ ] **Write hook test** - Test the query/mutation hooks
-- [ ] **Run the test file** - Verify it FAILS (RED)
 - [ ] **Implement hook** - Create TanStack Query hooks
-- [ ] **Run the test file** - Verify it PASSES (GREEN)
+- [ ] **Tests** - Only when "The bar, and which tests" below asks for one; often none
+- [ ] **Run it** - The test files you wrote or touched pass
 - [ ] **Update task file** - Mark task as done
 
 ## Running tests
 
-Run only the test file you wrote, with the project's per-file test command (the
+Run only the test files you wrote or touched, with the project's per-file test command (the
 project's own rule names it; Endoxia: `pnpm --filter <pkg> test <file>`), and check
-that the output names your file: from a workspace root, `vitest run <file>` can match
+that the output names them: from a workspace root, `vitest run <file>` can match
 no test and still exit 0. Never a package or repository suite: the parent's VERIFY
-runs the project's pre-queue check, which selects what your file reaches.
+runs the project's pre-queue check, which selects what they reach.
 
-## TDD Cycle
-
-### 1. RED - Write Failing Test
-
-```typescript
-// frontend/src/hooks/api/__tests__/use{Feature}.test.ts
-import { describe, it, expect, vi } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { use{Feature}, useCreate{Feature} } from '../use{Feature}';
-import { api } from '../../../lib/api';
-
-vi.mock('../../../lib/api');
-
-const wrapper = ({ children }) => {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } }
-  });
-  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
-};
-
-describe('use{Feature}', () => {
-  it('should fetch {feature} by id', async () => {
-    const mockData = { id: '1', field1: 'value' };
-    vi.mocked(api.get).mockResolvedValue({ data: mockData });
-
-    const { result } = renderHook(() => use{Feature}('1'), { wrapper });
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-    expect(result.current.data).toEqual(mockData);
-    expect(api.get).toHaveBeenCalledWith('/api/{feature}/1');
-  });
-});
-
-describe('useCreate{Feature}', () => {
-  it('should create {feature}', async () => {
-    const input = { field1: 'value' };
-    const mockData = { id: '1', ...input };
-    vi.mocked(api.post).mockResolvedValue({ data: mockData });
-
-    const { result } = renderHook(() => useCreate{Feature}(), { wrapper });
-
-    result.current.mutate(input);
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-    expect(result.current.data).toEqual(mockData);
-    expect(api.post).toHaveBeenCalledWith('/api/{feature}', input);
-  });
-});
-```
-
-Run test - it should FAIL.
-
-### 2. GREEN - Implement Hook
+## Implement Hook
 
 ```typescript
 // frontend/src/hooks/api/use{Feature}.ts
@@ -129,13 +73,28 @@ export function useCreate{Feature}() {
 }
 ```
 
-Run test - it should PASS.
+## The bar, and which tests
+
+**The bar in your brief is the whole bar.** Add no test, check, pin, gate, proof or
+review round above it. With no bar stated: the change is no worse than its base and
+its own tests pass. Hold or block only for a failing run at this head or a fault a
+user would hit.
+
+A test is optional: write one only when the brief asks for it or the fault has an
+obvious, cheap, local test target, and then only for a failure that can really
+happen, hurts when it does, and is not already caught elsewhere or cheaper (another
+test, the model e2e runs, staging, the gate before production). Name the failure in
+its title. No new test is better than a bad test; when you write none, say so in
+your report, with what you ran instead.
+
+For a hook the candidates are a mutation that leaves stale data on screen and an
+error the caller never sees. A hook that only forwards to the API client has none.
 
 ## Rules
 
 1. **Import types from shared/types** - Consistent with backend
 2. **Use query keys factory** - For cache management
 3. **Invalidate on mutation** - Keep cache fresh
-4. **Test first** - Don't write hooks until test exists
-5. **Mock api module** - Don't make real requests in tests
+4. **The brief's bar is the whole bar** - No test, check or proof above it
+5. **In a test, mock api module** - Don't make real requests in tests
 6. **Update task file** when done
