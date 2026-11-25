@@ -103,8 +103,9 @@ PR: the queue proves the merge result before main moves.
 
    **Merging does NOT deploy.** Deploy fires only on a `deploy-*` tag (or manual
    dispatch), never on a push to `main`. This brings work onto `main`; run
-   **`/deploy`** when you want it released (unlike `/ship`, a `/merge` approval
-   does not cover that staging deploy; `/approve merge deploy` covers both). Where
+   **`/deploy`** when you want it released before staging's next roll (staging
+   rolls main hourly when main moved, and before every promote; a `/merge` approval
+   does not cover a deploy, `/approve merge deploy` covers both). Where
    a project has a staging step (Endoxia, slice 603) that tag reaches STAGING, and
    production is a separate **`/promote`**.
 

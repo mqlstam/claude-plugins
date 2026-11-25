@@ -165,8 +165,8 @@ says what it read; a gap there is yours to weigh and never buys a round by itsel
 
 ## Step 4 - re-check only what changed
 
-The review is sized to the change: one full round by the other model family, three
-rounds at most.
+The review is sized to the change (owner, 2026-11-25): one full round by the other
+model family on a production-code change, three rounds at most.
 
 - **After a substantive fix:** one targeted verifier on the fix: a new
   `delegate_task` call (new `clientRequestId`) or a new agent, carrying the original
@@ -174,7 +174,7 @@ rounds at most.
   diff since the previous round. It reads the changed hunks only. Substantive is
   judged by what the change can reach, not by its length: one line in authorization,
   persistence order, concurrency or workflow history is substantive.
-- **After a docs, tests or wording change:** none.
+- **After a docs, test, comment or wording change:** none.
 - **Across a merge of main the verdict carries** when the reviewed diff is unchanged:
   `git diff $(git merge-base HEAD origin/main) HEAD | git patch-id --stable` gives the
   same id before and after.

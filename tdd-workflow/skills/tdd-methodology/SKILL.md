@@ -109,7 +109,7 @@ Reach for it before reaching for another grep-shaped gate.
 | --------------------------- | -------------------------------------------------------------- |
 | `/feature <name> [--layers]`| New feature; single-agent build, proved on the real surface    |
 | `/refactor <name> [--layers]`| Refactor; ANALYZE fans out, the build does not                |
-| `/ship`                     | Land the PR the owner reviewed: that exact head, then its staging deploy (VERIFY opens the PR with its evidence) |
+| `/ship`                     | Land the PR the owner reviewed: that exact head; it ends at the merge (VERIFY opens the PR with its evidence) |
 | `/quickship`                | Same local checks, push directly to main (through a PR and the merge queue where main requires one) |
 | `/merge`                    | Squash-merge an existing PR (directly, or through the merge queue) |
 | `/deploy`                   | Release main via a `deploy-*` tag — the only thing that deploys (Endoxia: to STAGING; production is `/promote`) |

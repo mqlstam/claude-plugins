@@ -88,8 +88,7 @@ class LandsExactlyTheReviewedHeadTest(unittest.TestCase):
 
     def test_the_approval_names_all_three_forms_and_is_spent_by_the_merge(self):
         text = words(skill("ship"))
-        for phrase in ("`/approve ship`", "approving review on GitHub", "spent by the merge taking effect",
-                       "ONE staging deploy tag on exactly the merge commit"):
+        for phrase in ("`/approve ship`", "approving review on GitHub", "spent by the merge taking effect"):
             self.assertIn(phrase, text)
 
     def test_a_wake_reads_the_review_and_lands_or_works_the_changes(self):
@@ -99,15 +98,6 @@ class LandsExactlyTheReviewedHeadTest(unittest.TestCase):
         self.assertIn("watch_pull_request", read(OPEN))
         self.assertIn("link_pull_request", read(OPEN))
         self.assertIn("Without the watch tool the owner types `/ship`", words(read(OPEN)))
-
-    def test_the_deploy_is_watched_in_the_turn_and_a_red_one_stays_with_the_owner(self):
-        text = words(skill("ship"))
-        self.assertIn("The turn does not end before the deploy run's verdict.", text)
-        report = text[text.index("8. **Report"):text.index("## Integrate main")]
-        self.assertLess(report.index("**Green**"), report.index("`settle`"))
-        red = report[report.index("**Red"):]
-        for phrase in ("STARTS with that", "do not settle", "`pin`", "`mark_unread`", "pnpm release:status"):
-            self.assertIn(phrase, red)
 
     def test_verify_opens_the_pr_at_ready_instead_of_suggesting_ship(self):
         text = words(read(VERIFY))

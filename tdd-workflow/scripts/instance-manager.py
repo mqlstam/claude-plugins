@@ -54,7 +54,7 @@ def main():
                 "Commands:\n"
                 "  /feature <name>    - New feature, built by one agent (--layers to fan out)\n"
                 "  /refactor <name>   - Refactor; ANALYZE fans out, the build does not (--layers)\n"
-                "  /ship              - Land the reviewed PR head (squash-merge), then deploy it to staging\n"
+                "  /ship              - Land the reviewed PR head (squash-merge or queue); ends there, no deploy\n"
                 "  /quickship         - Same local checks, push directly to main\n"
                 "  /merge             - Squash-merge a PR directly into main\n"
                 "  /deploy            - Release main: join the deploy run building it, else tag (Endoxia: STAGING)\n"
@@ -69,7 +69,8 @@ def main():
                 "is merged in only on a conflict, and that alone does not restart VERIFY.\n"
                 "Worktrees run independently; /ship squash-merges the exact PR head directly.\n"
                 "Main CI judges the merged range; red main is fixed forward, never blocks ships.\n"
-                "Staging refuses known red health and warns when unknown; promote gates the\n"
+                "Staging rolls main hourly when it moved and before every promote, watched by one\n"
+                "session; it refuses known red health. Promote gates the\n"
                 "exact production SHA with the full suite or a verified green for that SHA.\n"
                 "Never sleep-poll a long command: background it and wait for notification."
             )

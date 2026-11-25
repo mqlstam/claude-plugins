@@ -765,8 +765,8 @@ class FrontmatterTest(unittest.TestCase):
         root = os.path.dirname(os.path.dirname(HERE))
         self.assertEqual(gate.read_release_one_of(os.path.join(root, "skills", "quickship", "SKILL.md")),
                          ("merge", "push-main"))
-        for skill, expected, follow_on in (("ship", ("merge",), ("deploy-tag",)),
-                                           ("quickship", ("merge", "push-main"), ("deploy-tag",)),
+        for skill, expected, follow_on in (("ship", ("merge",), ()),
+                                           ("quickship", ("merge", "push-main"), ()),
                                            ("merge", ("merge",), ()),
                                            ("deploy", ("deploy-tag",), ())):
             path = os.path.join(root, "skills", skill, "SKILL.md")
@@ -776,27 +776,6 @@ class FrontmatterTest(unittest.TestCase):
                 self.assertNotIn("disable-model-invocation: true", fh.read().split("\n---", 1)[0], skill)
             for cls in expected + follow_on:
                 self.assertIn(cls, gate.ACTION_CLASSES)
-
-    def test_the_staging_step_reads_what_staging_serves(self):
-        # Review 2026-10-20: judging only `push` deploys skipped a /release dispatch that
-        # already served a descendant, and the ship tagged the older merge commit.
-        root = os.path.dirname(os.path.dirname(HERE))
-        dirs = [os.path.join(root, "skills")] + [d for d in [os.environ.get("ENDOXIA_SKILLS_DIR")] if d]
-        for skills in dirs:
-            for skill, commit in (("ship", "<M>"), ("quickship", "<P>")):
-                with open(os.path.join(skills, skill, "SKILL.md")) as fh:
-                    text = " ".join(fh.read().split())
-                where = f"{skills}/{skill}"
-                self.assertIn("environments/staging/variables/PUBLIC_URL", text, where)
-                self.assertIn("<URL>/api/health/live", text, where)
-                self.assertIn(f"git merge-base --is-ancestor {commit} <SERVED>", text, where)
-                # Round-2 review: the newest successful deploy run may be a production-only
-                # /hotfix, so an unreadable health route means no tag at all.
-                self.assertIn("push NO tag", text, where)
-                self.assertIn("staging deploy NOT RUN: staging's health route did not answer", text, where)
-                self.assertIn("`/deploy` as the owner's follow-up", text, where)
-                self.assertNotIn("--status success", text, where)
-                self.assertNotIn("a `push` run", text, where)
 
     def test_repo_copies_declare_the_same(self):
         # The Endoxia repo carries its own copies of ship/quickship/merge for other

@@ -55,7 +55,7 @@ class OwnedBackgroundStepTest(unittest.TestCase):
         self.assertIn("is a defect", text)
         self.assertIn("hand the step back explicitly", text)
         # the release verdict stays a foreground wait, as its skills say
-        self.assertIn("`release-run.py await` and `merge-queue.py await` run in foreground slices", text)
+        self.assertIn("`release-run.py await` runs in foreground slices", text)
 
     def test_the_context_still_fits_the_hook_limit(self):
         spec_path = os.path.join(ROOT, "scripts", "inject-context.py")

@@ -1,8 +1,7 @@
 ---
 name: quickship
-description: Validate, commit, merge origin/main and push directly to main without a review PR (where main requires GitHub's merge queue, through a PR the queue lands), then deploy the landed commit to staging. Runs when the user types /quickship, after /approve quickship, or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md); that one approval covers the landing and the staging deploy of what it landed.
+description: Validate, commit, merge origin/main and push directly to main without a review PR (where main requires GitHub's merge queue, through a PR the queue lands). It ends when the commit is on main or its PR is queued: it deploys nothing. Runs when the user types /quickship, after /approve quickship, or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md).
 release-actions: push-main | merge
-release-follow-on: deploy-tag
 argument-hint: "[commit message]"
 allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(date *), Bash(curl *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py *)
 ---
@@ -20,9 +19,8 @@ allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *),
 `/approve quickship`) is spent by the landing taking effect, never by invoking
 this skill, by a push that was rejected or by a PR the merge queue removed: retry
 in this session without asking again. It covers ONE landing, a push to `main` OR
-one merge of its own PR through the merge queue, and then ONE staging deploy tag on
-exactly the commit that landing put on main (step 8). Production (`/promote`,
-`/release`, `/hotfix`) needs its own approval.
+one merge of its own PR through the merge queue. A deploy tag (`/deploy`) and
+production (`/promote`, `/release`, `/hotfix`) need their own approval.
 
 1. **Only main, in the primary checkout.** Otherwise STOP and use /ship from the
    feature branch. Never switch branches in a shared tree. If nothing changed, STOP.
@@ -83,7 +81,7 @@ exactly the commit that landing put on main (step 8). Production (`/promote`,
      through the merge queue" (a) to (c) says (`${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md`),
      with `<SHA>` = `<C>`: `wait-mergeable.py <PR> --head <C> --queue`, then
      `gh pr merge <PR> --squash --match-head-commit <C>`, then
-     `merge-queue.py await <PR> --head <C> --slice-min 9` in foreground slices,
+     `merge-queue.py await <PR> --head <C> --slice-min 9` as a background command,
      every exit read as /ship's (c) reads it (`head_moved` dequeues first, `2` is
      read again once).
      `merged=<M>` → `<P>` is `<M>`, the squash commit the queue put on main; delete
@@ -93,29 +91,9 @@ exactly the commit that landing put on main (step 8). Production (`/promote`,
      `merge-queue.py dequeue <PR>`, landed under this same unspent approval. Local
      main keeps the commits the queue squashed; the next integration merges
      origin/main in without changing a file for them. Never reset or rewrite it.
-8. **Deploy what you landed to staging, under this same approval.** First, whether
-   the project deploys at all: `gh api repos/:owner/:repo/actions/workflows/deploy.yml --jq .state`.
-   A 404 (no such workflow) means there is no staging deploy here: say so in one
-   line and stop. Otherwise read `${CLAUDE_PLUGIN_ROOT}/skills/deploy/SKILL.md` and
-   carry out its steps here, with `<SHA>` = `<P>`. Do not invoke `/deploy` through
-   the Skill tool: this approval covers exactly one `deploy-*` tag on `<P>` while
-   `<P>` is on origin's `main`; a tag on any other commit needs `/approve deploy`.
-   Create the tag on `<P>` before pushing it, then push it by its literal name in a
-   command of its own. Before tagging, make sure staging does not already serve a
-   commit that contains `<P>` (a tag on `<P>` would roll it back). Read what
-   staging SERVES: `gh api repos/:owner/:repo/environments/staging/variables/PUBLIC_URL --jq .value`
-   gives `<URL>`, and `curl --max-time 10 <URL>/api/health/live` answers JSON whose
-   `version` is the served commit `<SERVED>`. When either cannot be read, push NO
-   tag: no other source says what staging serves (the newest successful deploy
-   run may be a production-only `/hotfix`), and a tag on an older commit would
-   roll staging back. Report "staging deploy NOT RUN: staging's health route did
-   not answer" with `<URL>` (or that it could not be read) and `<P>`, and name
-   `/deploy` as the owner's follow-up. Otherwise
-   `git merge-base --is-ancestor <P> <SERVED>` (exit `128`: `git fetch --quiet origin <SERVED>`
-   first) exiting `0` means staging already serves `<P>`: report that and push
-   nothing.
-   Report the staging result as the deploy steps say; production stays untouched
-   until `/promote`.
+8. **Report, and end.** The landed commit `<P>`, or that the PR is queued. Deploy
+   nothing and watch no release run: Staging rolls main on a fixed rhythm (hourly when main moved) and before every
+   promote, watched by one session; `/deploy` releases main on demand.
 
 ## After the push
 

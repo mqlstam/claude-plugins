@@ -42,9 +42,8 @@ What it allows:
   be ruled out, counts as spent.
 - One release command per Bash call: a call that can merge twice, push two tags
   or dispatch twice is refused before it runs.
-- **`ship` and `quickship` also cover the staging deploy of what they released:**
-  one `deploy-*` tag on exactly the merge commit (ship) or the pushed commit
-  (quickship; its merge commit where main requires a merge queue), pushed as `git push origin deploy-<TS>`. `merge` does not; `/approve merge deploy` covers both. Production
+- **`ship`, `quickship` and `merge` cover the landing only:** none deploys; staging
+  rolls main on its own rhythm. `/approve ship deploy` covers a deploy as well. Production
   (`promote`, `release`, `hotfix`) always needs its own approval.
 - A release that ran may re-run the failed jobs of the run it started once,
   `gh run rerun <id> --failed`, without a new approval (a deploy whose run failed
@@ -66,7 +65,7 @@ Do this now:
 
 1. Run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/release-approval-gate.py" --status --session ${CLAUDE_SESSION_ID} --cwd "$PWD"`
    and report the result in one or two short lines, in the user's language:
-   which approvals are open, what deploy a ship or quickship also covers, and any
+   which approvals are open, and any
    name that is not a release skill here (it approved nothing). If the status does
    not yet show the approval, the transcript is written asynchronously: run it
    once more.

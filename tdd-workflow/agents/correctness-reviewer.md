@@ -104,8 +104,8 @@ Do not run the whole suite; the parent does that.
 
 ## What to report
 
-Report only findings proven by a command you ran or by a concrete failure scenario:
-the input or state, and the wrong outcome that follows. The bar in the brief is the
+A finding counts only with a concrete failure scenario: the input or state, and the
+wrong outcome that follows; a command you ran may prove it. The bar in the brief is the
 whole bar: ask for no test, check, pin, gate or proof above it.
 
 Style, naming, structure, comments, formatting, a preferred abstraction, speculative hardening and
