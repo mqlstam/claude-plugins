@@ -4,6 +4,7 @@ import datetime
 import importlib.util
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -444,68 +445,144 @@ class BoundedWaitTest(unittest.TestCase):
 
 class SpotRerunTest(unittest.TestCase):
     """RunsOn reruns a job whose Spot instance was reclaimed: that attempt's red is not
-    the release's verdict, the next attempt's conclusion is. A job that turned the
-    retry off (a production-capable run) is never held."""
+    the release's verdict, the next attempt's conclusion is. Each case is one verdict
+    the await must not get wrong."""
 
     NOW = 1_800_000_000.0
     URL = "https://github.com/o/r/actions/runs/9"
     SPOT = "runs-on=9/runner=4cpu-linux-x64"
+    INTERRUPTED = [{"title": "EC2 Spot interruption", "annotation_level": "failure", "message": "reclaimed"}]
+    TEST_FAILED = [{"title": "Process completed with exit code 1.", "annotation_level": "failure"}]
 
     def stamp(self, epoch):
         return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).isoformat()
 
-    def run_await(self, label, second):
-        """Attempt 1 ended red at second 0 on a Spot-annotated job carrying `label`;
-        attempt 2 starts at second 60 and concludes `second` at second 120."""
+    def job(self, job_id, label=None, conclusion="failure"):
+        return {"id": job_id, "name": f"job-{job_id}", "conclusion": conclusion, "labels": [label or self.SPOT]}
+
+    def pages(self, *pages):
+        total = sum(len(page) for page in pages)
+        return [{"total_count": total, "jobs": list(page)} for page in pages]
+
+    def run_await(self, run, attempts, jobs, annotations, slice_s=9 * 60):
+        """`run(t)` is the run as `gh run view` shows it at second t (None: the read
+        fails); `attempts[n](t)` is attempt n's own record; `jobs[n]` its job pages;
+        `annotations[job id]` that job's annotations (None: unreadable)."""
         clock = Clock()
 
         def answer(args):
-            if args[0] == "api" and "/attempts/" in args[-1]:
-                # Job 7 of attempt 1 was interrupted; job 8 of attempt 2 failed for itself.
-                first = "/actions/runs/9/attempts/1/jobs" in args[-1]
-                return [{"jobs": [{"id": 7 if first else 8, "name": "build", "conclusion": "failure",
-                                   "labels": [label]}]}]
-            if args[0] == "api":
-                if "check-runs/8/annotations" in args[-1]:
-                    return [{"title": "Process completed with exit code 1.", "annotation_level": "failure"}]
-                self.assertIn("check-runs/7/annotations", args[-1])
-                return [{"title": "EC2 Spot interruption", "annotation_level": "failure", "message": "reclaimed"}]
-            if "jobs" in args[4]:
-                return {"status": "completed", "conclusion": "failure", "url": self.URL, "jobs": []}
-            if clock.t < 60:
-                return {"status": "completed", "conclusion": "failure", "url": self.URL, "attempt": 1,
-                        "startedAt": self.stamp(self.NOW - 600), "updatedAt": self.stamp(self.NOW)}
-            done = clock.t >= 120
-            return {"status": "completed" if done else "in_progress", "conclusion": second if done else "",
-                    "url": self.URL, "attempt": 2, "startedAt": self.stamp(self.NOW + 60),
-                    "updatedAt": self.stamp(self.NOW + clock.t)}
+            if args[0] == "run":
+                if "jobs" in args[4]:
+                    return {"status": "completed", "conclusion": "failure", "url": self.URL, "jobs": []}
+                shown = run(clock.t)
+                return shown and {"url": self.URL, "startedAt": self.stamp(self.NOW - 600), **shown}
+            path = args[-1]
+            of_attempt = re.search(r"/actions/runs/9/attempts/(\d+)(/jobs)?", path)
+            if of_attempt and of_attempt.group(2):
+                return jobs[int(of_attempt.group(1))]
+            if of_attempt:
+                return attempts[int(of_attempt.group(1))](clock.t)
+            return annotations[int(re.search(r"check-runs/(\d+)/annotations", path).group(1))]
 
         gh = SlowGh(clock, answer, takes=lambda _a, _t: 0)
         old = rr.gh_json
         rr.gh_json = gh
         try:
-            code, out = rr.await_run("9", None, 190 * 60, 30, slice_s=9 * 60, clock=clock.now,
+            code, out = rr.await_run("9", None, 190 * 60, 30, slice_s=slice_s, clock=clock.now,
                                      sleep=clock.sleep, wall=lambda: self.NOW + clock.t)
         finally:
             rr.gh_json = old
         return code, out, clock.t
 
+    def ended(self, attempt, conclusion, at=0):
+        return {"status": "completed", "conclusion": conclusion, "run_attempt": attempt,
+                "updated_at": self.stamp(self.NOW + at)}
+
+    def rerun(self, second, label=None):
+        """Attempt 1 ended red at second 0 on one interrupted job; attempt 2 starts at
+        second 60 and concludes `second` at second 120."""
+        def run(t):
+            if t < 60:
+                return {"status": "completed", "conclusion": "failure", "attempt": 1}
+            return {"status": "completed" if t >= 120 else "in_progress",
+                    "conclusion": second if t >= 120 else "", "attempt": 2}
+
+        attempts = {1: lambda _t: self.ended(1, "failure"),
+                    2: lambda t: self.ended(2, second, 120) if t >= 120 else {"status": "in_progress", "run_attempt": 2}}
+        jobs = {1: self.pages([self.job(7, label)]), 2: self.pages([self.job(8)])}
+        return self.run_await(run, attempts, jobs, {7: self.INTERRUPTED, 8: self.TEST_FAILED})
+
     def test_a_spot_interrupted_attempt_is_followed_into_a_green_rerun(self):
-        code, out, _ = self.run_await(self.SPOT, "success")
+        code, out, _ = self.rerun("success")
         self.assertEqual(code, 0, out)
-        self.assertIn("spot_interruption_rerun_expected run_id=9 attempt=1 job=build", out)
+        self.assertIn("spot_interruption_rerun_expected run_id=9 attempt=1 job=job-7", out)
         self.assertEqual(out.splitlines()[0], f"conclusion=success run_id=9 url={self.URL}")
 
     def test_a_rerun_that_ends_red_is_red(self):
-        code, out, _ = self.run_await(self.SPOT, "failure")
+        code, out, _ = self.rerun("failure")
         self.assertEqual(code, 1, out)
-        self.assertIn(f"conclusion=failure run_id=9 url={self.URL}", out)
+        self.assertEqual(out.splitlines()[0], f"conclusion=failure run_id=9 url={self.URL}")
 
     def test_a_job_with_the_retry_off_is_red_at_attempt_one_and_never_held(self):
         for label in (self.SPOT + "/retry=false", self.SPOT + "/spot=false"):
-            code, out, waited = self.run_await(label, "success")
+            code, out, waited = self.rerun("success", label)
             self.assertEqual((code, waited), (1, 0.0), out)
             self.assertNotIn("spot_interruption", out)
+
+    def red_at_once(self, jobs, annotations, conclusion="failure"):
+        """Attempt 1 ended; were it held, the rerun would end green at second 120."""
+        def run(t):
+            return {"status": "completed", "conclusion": conclusion if t < 60 else "success",
+                    "attempt": 1 if t < 60 else 2}
+
+        attempts = {1: lambda _t: self.ended(1, conclusion), 2: lambda _t: self.ended(2, "success", 120)}
+        code, out, waited = self.run_await(run, attempts, {1: jobs}, annotations)
+        self.assertEqual((code, waited), (1, 0.0), out)
+        self.assertNotIn("spot_interruption", out)
+        return out
+
+    def test_an_interruption_beside_a_real_failure_is_red_at_once(self):
+        # Review finding (Codex, 2026-11-25): GitHub reruns ALL failed jobs, so a held
+        # attempt whose other job failed a flaky test came back green. The other job
+        # is on the second page, where a first-page read never saw it.
+        self.red_at_once(self.pages([self.job(7)], [self.job(8)]), {7: self.INTERRUPTED, 8: self.TEST_FAILED})
+
+    def test_an_interruption_whose_neighbour_cannot_be_read_is_red_at_once(self):
+        self.red_at_once(self.pages([self.job(7), self.job(8)]), {7: self.INTERRUPTED, 8: None})
+
+    def test_a_cancelled_attempt_is_reported_at_once(self):
+        # RunsOn starts no rerun after a cancelled attempt (runs-on issue #588).
+        out = self.red_at_once(self.pages([self.job(7)]), {7: self.INTERRUPTED}, conclusion="cancelled")
+        self.assertEqual(out.splitlines()[0], f"conclusion=cancelled run_id=9 url={self.URL}")
+
+    def test_the_hold_ends_at_its_bound_when_the_reads_fail(self):
+        # Review finding: a failed read at the hold's end moved the end. The run is
+        # read once, held, and never answers again: the red comes at 240 s + one poll.
+        code, out, waited = self.run_await(
+            lambda t: {"status": "completed", "conclusion": "failure", "attempt": 1} if t == 0 else None,
+            {1: lambda _t: self.ended(1, "failure")}, {1: self.pages([self.job(7)])}, {7: self.INTERRUPTED})
+        self.assertEqual((code, waited), (1, rr.SPOT_RERUN_HOLD_S + 30), out)
+        self.assertIn("spot_interruption_no_rerun run_id=9 attempt=1", out)
+
+    def test_a_run_that_names_the_new_attempt_with_the_old_state_is_not_judged_by_it(self):
+        # Review finding: GitHub does not promise one read is one attempt. From second
+        # 30 the run names attempt 2 while its state is still the old one, until
+        # attempt 2 itself completes at second 120. `shown` is what the run falsely
+        # shows meanwhile, `real` what attempt 2 concludes.
+        for shown, real, code in (("failure", "success", 0), ("success", "failure", 1)):
+            def run(t, shown=shown, real=real):
+                if t < 30:
+                    return {"status": "completed", "conclusion": "failure", "attempt": 1}
+                return {"status": "completed", "conclusion": real if t >= 120 else shown, "attempt": 2}
+
+            attempts = {1: lambda _t: self.ended(1, "failure"),
+                        2: lambda t, real=real: (self.ended(2, real, 120) if t >= 120
+                                                 else {"status": "in_progress", "run_attempt": 2})}
+            got, out, waited = self.run_await(run, attempts,
+                                              {1: self.pages([self.job(7)]), 2: self.pages([self.job(8)])},
+                                              {7: self.INTERRUPTED, 8: self.TEST_FAILED})
+            self.assertEqual((got, waited), (code, 120.0), out)
+            self.assertEqual(out.splitlines()[0], f"conclusion={real} run_id=9 url={self.URL}")
 
 
 class GhCallTimeoutTest(unittest.TestCase):
