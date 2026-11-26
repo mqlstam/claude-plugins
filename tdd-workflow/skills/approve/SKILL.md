@@ -31,8 +31,8 @@ What it allows:
 - For each named release skill, you may invoke it in this session through the
   Skill tool, and its declared release action (merge, push to main or workflow
   dispatch) is allowed once. No skill pushes a tag: `deploy` is a dispatch to
-  staging, and its approval covers a dispatch that names `target=staging` and
-  no other.
+  staging, and its approval covers exactly `gh workflow run deploy.yml --ref
+  main -f target=staging`, with at most `-f accept_off=<capability names>`.
 - **The approval is spent only by its effect:** the PR is MERGED, the push
   landed on main, the workflow run was created. Invoking
   the skill spends nothing, and neither does a command that was refused, or that

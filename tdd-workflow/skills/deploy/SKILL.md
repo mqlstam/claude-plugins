@@ -106,18 +106,30 @@ Before joining or dispatching, read the newest health status for this exact SHA:
    `.claude/rules/ships-turned-on.md`), a dispatch that names nothing is refused
    in its first job. Read the list at `<SHA>`, first:
    `gh api -X GET repos/:owner/:repo/contents/docker/environments/staging.capabilities.json -f ref=<SHA> -H 'Accept: application/vnd.github.raw' --jq '[.capabilities | to_entries[] | select(.value.expected == "off") | .key] | join(",")'`
-   A non-empty answer `<OFFS>` (a comma list without spaces) is added exactly as
-   read: `gh workflow run deploy.yml --ref main -f target=staging -f accept_off=<OFFS>`,
+   An empty answer or a 404 (no such manifest) adds nothing. A non-empty answer
+   `<OFFS>` is used only when every name in it is a capability name as the
+   release reads one: a lowercase letter, then lowercase letters, digits or `_`,
+   the names joined by single commas with no space (the release gate holds
+   `accept_off` to exactly that). A name outside it (a capital, a space, a dash,
+   a quote, an empty name) → STOP: report that name and the manifest, and build
+   no command; the manifest is wrong, and the gate would refuse the dispatch.
+   Otherwise the list is added exactly as read:
+   `gh workflow run deploy.yml --ref main -f target=staging -f accept_off=<OFFS>`,
    and the message of step 6 names them: this deploy leaves those capabilities off
-   on staging, as its manifest declares. An empty answer or a 404 (no such
-   manifest) adds nothing.
+   on staging, as its manifest declares.
+
+   Write the command exactly in that shape: `deploy.yml` by its bare name,
+   `--ref main`, `-f` for each field, no `--repo`. The approval of this skill
+   covers that command and no variant of it.
 
    Never any other input on your own: `accept_recreate`, `accept_drain`,
    `accept_disk_reading`, `waive_cve`, `carry` and `allow_replacing` are the
    owner's word for one release. A run that refuses for the lack of one prints the
    dispatch it needs; report that line and stop. And never another `target`:
-   `both` and `production` are `/release`, `/promote` and `/hotfix`, and this
-   skill's approval covers a dispatch that names `target=staging` and no other.
+   `both` and `production` are `/release`, `/promote` and `/hotfix`.
+
+   **Remember whether this dispatch printed the run's URL.** Only then is the
+   run "this session's own" for a later `gh run rerun <id> --failed` (step 8).
 
 5. **The run id.** The dispatch prints the created run's URL,
    `https://github.com/<owner>/<repo>/actions/runs/<id>`; `<id>` is its last path
@@ -203,7 +215,7 @@ Before joining or dispatching, read the newest health status for this exact SHA:
      - `reason=billing …` → report that line as it stands: GitHub refused to start
        the jobs, nothing was built, and it is the owner's action (Settings →
        Billing & plans). No rerun and no new dispatch until the owner says billing
-       is fixed; then `gh run rerun <id> --failed`, which this approval covers once.
+       is fixed; then the rerun rule below.
      - `reason=job-failure …` → name the failed job, its step and the first
        annotation. For more, `gh run view <id> --log-failed > /tmp/deploy-<id>.log 2>&1`
        and read the failing step from that file. A staging run whose failed job
@@ -211,11 +223,20 @@ Before joining or dispatching, read the newest health status for this exact SHA:
        attempt red and does not wait for the rerun, so you read the run again
        after its next attempt (the same `await` with the same run id), and
        never dispatch a second one. A transient error (registry
-       pull, token, runner) on a run this /deploy dispatched is retried with
-       `gh run rerun <id> --failed`, which its approval covers once when the
-       dispatch printed the run's URL; on a joined run this /deploy dispatched
-       nothing, so step 4 (its own dispatch) is the retry. A code
+       pull, token, runner) is retried by the rerun rule below. A code
        failure needs a fix and a new /deploy.
+
+   **The rerun rule.** `gh run rerun <id> --failed` is covered by this run's
+   approval, once, in exactly one case: `<id>` is the run this session's own
+   dispatch started AND that dispatch's output printed its URL (step 5's first
+   sentence). Then run it, and go back to step 7 with the same `<id>`.
+   In every other case the gate refuses it, so do not run it: a JOINED run, a
+   run whose id came from `release-run.py find`, a second rerun of the same run.
+   - A joined run, when this /deploy dispatched nothing yet: step 4 (its own
+     dispatch) is the retry, under this same approval.
+   - Otherwise STOP and say so: "run `<id>` failed on `<reason>`; re-running it
+     needs your word again: type `/deploy`, or send `/approve deploy` as a
+     message of its own." A new `/deploy` then joins or dispatches as above.
 
 **Report the `conclusion`, never an exit code.** "It is live" may only follow
 `status == completed` and `conclusion == success`, confirmed by the second read.

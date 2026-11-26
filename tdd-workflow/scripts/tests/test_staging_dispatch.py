@@ -18,6 +18,8 @@ NOT_STAGING_ONLY = (
     "gh workflow run deploy.yml --ref main -f target=both",
     "gh workflow run deploy.yml --ref hotfix -f target=production",
     STAGING + " -f target=both",
+    STAGING + " -f target=production",
+    STAGING + " -f target=staging",
     "gh workflow run deploy.yml -f target=both -f target=staging",
     STAGING + " -ftarget=production",
     STAGING + " --raw-field=target=production",
@@ -25,7 +27,45 @@ NOT_STAGING_ONLY = (
     STAGING + " --json",
     "gh workflow run deploy.yml --ref target=staging",
     "gh workflow run deploy.yml -f note=target=staging",
+    # Review round 1: only the one workflow, on main, with the two fields it may name.
+    STAGING + " -f promote_after_staging=true",
+    STAGING + " -f waive_cve=CVE-2026-1",
+    STAGING + " -f accept_recreate=corpus-postgres",
+    STAGING + " -f accept_drain=temporal-ui",
+    STAGING + " -f accept_disk_reading=stalled",
+    STAGING + " -f carry=abc",
+    "gh workflow run promote.yml --ref main -f target=staging",
+    "gh workflow run .github/workflows/deploy.yml --ref main -f target=staging",
+    "gh workflow run Deploy.yml --ref main -f target=staging",
+    "gh workflow run 12345 --ref main -f target=staging",
+    "gh workflow run deploy.yml -f target=staging",
+    "gh workflow run deploy.yml --ref some-branch -f target=staging",
+    "gh workflow run deploy.yml --ref main --ref some-branch -f target=staging",
+    "gh workflow run deploy.yml -r main -f target=staging",
+    "gh workflow run deploy.yml --ref=main -f target=staging",
+    STAGING + " --repo other/repo",
+    STAGING + " -R other/repo",
+    "gh -R other/repo workflow run deploy.yml --ref main -f target=staging",
+    "GH_REPO=other/repo gh workflow run deploy.yml --ref main -f target=staging",
+    "gh workflow run deploy.yml --ref main --raw-field target=staging",
+    "gh workflow run deploy.yml --ref main -F target=staging",
+    "gh workflow run deploy.yml --ref main --field target=staging",
+    STAGING + " -f accept_off=a -f accept_off=b",
+    STAGING + " -f accept_off=",
+    STAGING + " -f accept_off=a,",
+    STAGING + " -f accept_off=a,,b",
+    STAGING + " -f accept_off=A",
+    STAGING + " -f accept_off=a-b",
+    STAGING + " -f accept_off=1a",
+    STAGING + " extra.yml",
 )
+# Words the gate refuses to read at all in a release command (quotes, `;`): refused
+# before any approval is asked, so never covered either.
+UNREADABLE = (
+    STAGING + " -f accept_off='a b'",
+    STAGING + ' -f accept_off="a,b"',
+)
+SPLIT = STAGING + " -f accept_off=a;b"
 
 
 def shipped():
@@ -42,8 +82,9 @@ class StagingDispatchClassTest(unittest.TestCase):
         return gate.classify(cmd, "/repo", branch_of=on_branch("feature"))
 
     def test_only_a_dispatch_that_can_reach_staging_alone_is_a_staging_dispatch(self):
-        for cmd in (STAGING, WITH_OFFS, "gh workflow run deploy.yml --raw-field target=staging",
-                    "gh workflow run deploy.yml -F target=staging --ref main"):
+        for cmd in (STAGING, WITH_OFFS, STAGING + " -f accept_off=a,b", STAGING + " -f accept_off=a1_b",
+                    "gh workflow run deploy.yml -f accept_off=a,b -f target=staging --ref main",
+                    "gh workflow run --ref main -f target=staging deploy.yml"):
             self.assertEqual(self.c(cmd), {"dispatch-staging"}, cmd)
         for cmd in NOT_STAGING_ONLY:
             self.assertEqual(self.c(cmd), {"dispatch"}, cmd)
@@ -55,10 +96,17 @@ class DeployApprovalTest(unittest.TestCase):
             t = Transcript().typed("approve", "deploy")
             self.assertIsNone(bash_decision(t, STAGING))
             self.assertIsNone(bash_decision(t, WITH_OFFS))
+            self.assertIsNone(bash_decision(t, STAGING + " -f accept_off=a,b"))
             for cmd in NOT_STAGING_ONLY:
                 reason = bash_decision(t, cmd)
                 self.assertIn("release action (dispatch)", reason or "allowed", cmd)
                 self.assertIn("/approve promote", reason, cmd)
+            for cmd in UNREADABLE:
+                self.assertIn("Refused before running", bash_decision(t, cmd) or "allowed", cmd)
+            # `accept_off=a;b` is two commands: the dispatch names `a`, then `b` runs.
+            self.assertIsNone(bash_decision(t, SPLIT))
+            self.assertEqual(gate.classify(STAGING + " -f accept_off=a", "/repo", branch_of=on_branch("x")),
+                             {"dispatch-staging"})
             self.assertIn("release action (dispatch)", bash_decision(t, "gh run rerun 42") or "allowed")
             self.assertIn("deploy (dispatch-staging)", status_text(t))
             t.bash(WITH_OFFS, output="https://github.com/EndoxiaBV/Endoxia/actions/runs/77")

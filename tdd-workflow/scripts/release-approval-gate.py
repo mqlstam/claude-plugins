@@ -40,8 +40,9 @@ Two layers, one script:
                dispatch    gh workflow run, gh run rerun; gh api write to
                            actions/workflows/W/dispatches, actions/runs/N/rerun
                dispatch-staging
-                           gh workflow run that names `-f target=staging` and no
-                           other target (below, A STAGING DISPATCH)
+                           exactly `gh workflow run deploy.yml --ref main -f
+                           target=staging [-f accept_off=<names>]` (below, A
+                           STAGING DISPATCH)
                rerun      gh run rerun <id> --failed; gh api write to
                            actions/runs/N/rerun-failed-jobs
 
@@ -233,9 +234,18 @@ A STAGING DISPATCH (2026-11-26). /deploy releases main to staging with a dispatc
 `deploy-*` tag: where the staging release writes that tag itself as its "staging
 verified" marker (Endoxia #3342), a pushed one starts nothing and marks a commit
 staging never verified. So /deploy declares `release-actions: dispatch-staging`: a
-`gh workflow run` in which a `target=staging` field is given with -f, --raw-field,
--F or --field as a word of its own, every word that holds `target=` is that field,
-and no `--json` is passed (inputs from standard input are not read). Its approval
+command is one only when it is, word for word, on an allowlist (review round 1: a
+bare `target=staging` test also covered any workflow, any ref and any other input,
+`accept_recreate`, `accept_drain` and `waive_cve` among them). All of:
+  * the workflow is exactly `deploy.yml` (no path, id or other casing);
+  * `--ref main`, as two words, once;
+  * `-f target=staging`, once;
+  * at most one `-f accept_off=<names>`, the names a comma list in the grammar
+    Endoxia's manifest reader holds a capability to (`[a-z][a-z0-9_]*`);
+  * nothing else: no other field, no repeated field, no -F / --field /
+    --raw-field / --json (a typed field can read a file or standard input), no
+    -R / --repo on gh or the subcommand, and no GH_REPO reaching gh.
+Anything else is a plain `dispatch`, as before the class existed. Its approval
 covers that one dispatch and no other: a dispatch to production or to both, a
 promote, a rerun the release did not start, all still need a skill that declares
 `dispatch`. An approval of `dispatch` covers a staging dispatch as it did before
@@ -1093,20 +1103,44 @@ def _workflow_target(args: list[str]) -> tuple[str | None, str | None]:
     return workflow, slug
 
 
-_FIELD_FLAGS = ("-f", "--raw-field", "-F", "--field")
+# The one workflow, ref and inputs a staging dispatch may name (docstring, A STAGING
+# DISPATCH). The capability grammar is Endoxia's own: scripts/deploy/lib/
+# capability-naming.sh CN_CAPABILITY_NAME, `[a-z][a-z0-9_]*`, which its manifest
+# reader holds every declared name to, joined by commas without spaces (CN_OFFS;
+# scripts/ci/staging-rhythm.mjs CAPABILITY_LIST is the same pattern).
+STAGING_WORKFLOW = "deploy.yml"
+STAGING_REF = "main"
+CAPABILITY_LIST = re.compile(r"[a-z][a-z0-9_]*(?:,[a-z][a-z0-9_]*)*")
 
 
 def _staging_only_dispatch(args: list[str]) -> bool:
-    """True when `gh workflow run <args>` can only release to staging: a
-    `target=staging` field given as a word of its own after -f / --raw-field / -F /
-    --field, every word holding `target=` being such a field, and no `--json` (its
-    inputs come from standard input, which is not read). Anything else, a second
-    target or a spelling not listed here included, is a plain dispatch."""
-    if any(tok == "--json" or tok.startswith("--json=") for tok in args):
+    """True when `gh workflow run <args>` is exactly the staging deploy of main:
+    `deploy.yml`, `--ref main` once, `-f target=staging` once, at most one
+    `-f accept_off=<capability names>`, in any order, and no other word. An
+    allowlist: any other workflow, ref, flag, field or spelling is a plain dispatch."""
+    workflow: list[str] = []
+    refs: list[str] = []
+    fields: list[str] = []
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok in ("--ref", "-f"):
+            if i + 1 >= len(args):
+                return False
+            (refs if tok == "--ref" else fields).append(args[i + 1])
+            i += 2
+        elif tok.startswith("-"):
+            return False
+        else:
+            workflow.append(tok)
+            i += 1
+    if workflow != [STAGING_WORKFLOW] or refs != [STAGING_REF]:
         return False
-    named = [i for i, tok in enumerate(args) if "target=" in tok]
-    return bool(named) and all(
-        args[i] == "target=staging" and i > 0 and args[i - 1] in _FIELD_FLAGS for i in named)
+    offs = [f for f in fields if f != "target=staging"]
+    if fields.count("target=staging") != 1 or len(offs) > 1:
+        return False
+    return not offs or (offs[0].startswith("accept_off=")
+                        and CAPABILITY_LIST.fullmatch(offs[0][len("accept_off="):]) is not None)
 
 
 # --------------------------------------------------------------------------
@@ -1920,7 +1954,10 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
                 details["merges"].append({"ref": ref, "dir": where, "slug": repo, "auto": auto,
                                           "head": _match_head(view.args)})
         elif view.kind == "gh-workflow-run":
-            add(STAGING_DISPATCH if _staging_only_dispatch(view.args) else "dispatch")
+            # A repository named any way but the checkout's own (-R, GH_REPO) is not
+            # the staging deploy this session's /deploy makes: a plain dispatch.
+            add(STAGING_DISPATCH if _staging_only_dispatch(view.args)
+                and not (slug or view.slug or repo_candidate) else "dispatch")
             if details is not None:
                 details["dispatches"].append({"workflow": ref, "run": None, "slug": repo, "dir": where})
         elif one:
