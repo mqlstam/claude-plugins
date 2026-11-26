@@ -1,5 +1,5 @@
-"""Owner, 2026-10-22: the owner approves a feature by watching its evidence on the PR
-BEFORE it merges. VERIFY opens the PR (phase 1, no approval: nothing merges); /ship
+"""Owner, 2026-10-22: the owner approves a feature on its PR BEFORE it merges (since
+2026-11-25 nothing is recorded for the PR). VERIFY opens the PR (phase 1, no approval: nothing merges); /ship
 lands exactly that PR head (phase 2, the approval as before)."""
 import json
 import os
@@ -18,8 +18,7 @@ SESSION = scope(session=("/work/endoxia",))
 def concrete(cmd):
     """A documented command with its placeholders filled in as a session would."""
     for placeholder, value in (("${CLAUDE_PLUGIN_ROOT}", PLUGIN), ("<BRANCH>", "t3/feature-x"), ("<PR>", "1408"),
-                               ('"<title>"', "feat-x"), ("./<path>", "./.claude/verify-evidence/r1/02-flow.mp4"),
-                               ("...", "")):
+                               ('"<title>"', "feat-x"), ("...", "")):
         cmd = cmd.replace(placeholder, value)
     return cmd.strip()
 
@@ -32,7 +31,6 @@ class OpenForReviewNeedsNoApprovalTest(unittest.TestCase):
     def open_commands(self):
         cmds = [concrete(c) for c in commands(read(OPEN))]
         self.assertTrue(any(c.startswith(f"python3 {PLUGIN}/scripts/agent-github-token.py run gh pr create") for c in cmds))
-        self.assertTrue(any(c.startswith("gh pr edit 1408 --body-file") and "--attach" in c for c in cmds))
         return cmds
 
     def test_every_command_of_phase_one_is_no_release(self):
@@ -71,14 +69,14 @@ class OpenForReviewNeedsNoApprovalTest(unittest.TestCase):
 
 
 class LandsExactlyTheReviewedHeadTest(unittest.TestCase):
-    def test_land_checks_the_pr_and_its_evidence_before_merging_that_head(self):
+    def test_land_checks_the_pr_before_merging_that_head(self):
         text = skill("ship")
         land = text[text.index("## Steps (land)"):text.index("## Integrate main")]
         covers = "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py review-covers <PR>"
         self.assertIn(covers, commands(land))
         self.assertLess(land.index(covers), land.index("gh pr merge <PR> --squash --match-head-commit <SHA>"))
         self.assertLess(land.index("gh pr view --json number,state,headRefOid"), land.index(covers))
-        self.assertIn("Never land a head the owner has not been shown.", words(land))
+        self.assertIn("Never land a head no verdict covers.", words(land))
         self.assertIn("open-for-review.md", land)
         self.assertIn("STOP", land[land.index(covers):land.index("4. **Which landing path")])
 
@@ -88,8 +86,7 @@ class LandsExactlyTheReviewedHeadTest(unittest.TestCase):
 
     def test_the_approval_names_all_three_forms_and_is_spent_by_the_merge(self):
         text = words(skill("ship"))
-        for phrase in ("`/approve ship`", "approving review on GitHub", "spent by the merge taking effect",
-                       "ONE staging deploy tag on exactly the merge commit"):
+        for phrase in ("`/approve ship`", "approving review on GitHub", "spent by the merge taking effect"):
             self.assertIn(phrase, text)
 
     def test_a_wake_reads_the_review_and_lands_or_works_the_changes(self):
@@ -99,15 +96,6 @@ class LandsExactlyTheReviewedHeadTest(unittest.TestCase):
         self.assertIn("watch_pull_request", read(OPEN))
         self.assertIn("link_pull_request", read(OPEN))
         self.assertIn("Without the watch tool the owner types `/ship`", words(read(OPEN)))
-
-    def test_the_deploy_is_watched_in_the_turn_and_a_red_one_stays_with_the_owner(self):
-        text = words(skill("ship"))
-        self.assertIn("The turn does not end before the deploy run's verdict.", text)
-        report = text[text.index("8. **Report"):text.index("## Integrate main")]
-        self.assertLess(report.index("**Green**"), report.index("`settle`"))
-        red = report[report.index("**Red"):]
-        for phrase in ("STARTS with that", "do not settle", "`pin`", "`mark_unread`", "pnpm release:status"):
-            self.assertIn(phrase, red)
 
     def test_verify_opens_the_pr_at_ready_instead_of_suggesting_ship(self):
         text = words(read(VERIFY))
@@ -119,21 +107,15 @@ class LandsExactlyTheReviewedHeadTest(unittest.TestCase):
         refactor = words(read(os.path.join(ROOT, "skills", "refactor", "phases", "05-verify.md")))
         self.assertIn("open-for-review.md", refactor)
 
-    def test_phase_one_checks_evidence_and_writes_the_marker_first(self):
+    def test_phase_one_writes_the_marker_and_attaches_nothing(self):
         text = read(OPEN)
         cmds = commands(text)
-        for cmd in ("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py evidence",
-                    "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py review-marker"):
-            self.assertIn(cmd, cmds)
-        self.assertIn("- NOT RUN: <criterion> (<reason>)", text)
-        self.assertIn("Runtime evidence: out of scope (<outOfScope>)", text)
-        self.assertLess(text.index("verify-state.py evidence"), text.index("run gh pr create"))
-        self.assertNotIn("--attach", " ".join(c for c in cmds if "agent-github-token.py" in c),
-                         "gh uploads attachments only with a user token")
+        self.assertIn("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py review-marker", cmds)
+        self.assertNotIn("--attach", " ".join(cmds))
 
     def test_version(self):
         manifest = json.loads(read(os.path.join(ROOT, ".claude-plugin", "plugin.json")))
-        self.assertEqual(manifest["version"], "1.13.0")
+        self.assertEqual(manifest["version"], "1.14.0")
 
 
 class AppSetupDocTest(unittest.TestCase):

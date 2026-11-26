@@ -35,6 +35,6 @@ Use `module-migrator` — one per affected module, launched in parallel if multi
 - All callers migrated
 - Old code deleted
 - The test files of every migrated call site pass, run with the project's per-file
-  test command (Endoxia: `pnpm --filter <pkg> test <file>…`); VERIFY's `ship:check`
-  selects what they reach. A whole suite needs a stated reason.
+  test command (Endoxia: `pnpm --filter <pkg> test <file>…`); VERIFY's pre-queue
+  check selects what they reach. A whole suite needs a stated reason.
 - Mark migrate task as completed, move to REVIEW phase

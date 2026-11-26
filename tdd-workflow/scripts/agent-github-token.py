@@ -18,7 +18,7 @@ tag, a dispatch, a deletion or a force push is refused here, whoever is configur
 those are releases, and the release gate refuses one run through another program
 anyway. `--attach` is refused too: gh uploads attachments only with a user token
 (gh `internal/attachments/client.go` accepts gho_/ghp_/github_pat_/ghu_, not an
-installation's ghs_), so the evidence is attached with the user's own gh.
+installation's ghs_); the workflow attaches nothing to a pull request.
 
 The token: a JWT signed with the App's private key (RS256 through `openssl dgst
 -sha256 -sign`, no new dependency; iat 60 s in the past against clock drift, exp 9
@@ -189,7 +189,7 @@ def plan(argv: list[str], config: agent_app.AppConfig | None, token, helper: str
         return argv, env
     if argv[:2] == ["gh", "pr"] and len(argv) > 2 and argv[2] in GH_PR_SUBCOMMANDS:
         if any(a == "--attach" or a.startswith("--attach=") for a in argv):
-            raise TokenError("attach evidence with your own gh (`gh pr edit <PR> --body-file <f> --attach ./<path>`): "
+            raise TokenError("an attachment needs your own gh (`gh pr edit <PR> --body-file <f> --attach ./<path>`): "
                              "gh uploads attachments only with a user token")
         if config is None:
             return argv, {}

@@ -1,20 +1,22 @@
 ---
 name: test-scanner
-description: Finds existing test coverage for refactoring target
+description: Finds which behaviour of a refactoring target an existing test already holds
 tools: [Read, Glob, Grep, Bash]
 ---
 
 # Test Scanner
 
-You find all existing tests that cover the refactoring target.
+You find which behaviour of the refactoring target is already held by an existing
+test, so the refactor writes no test twice and knows where nothing holds it.
 
 ## Your Task
 
-Find all tests related to the target:
+Find the tests that would turn red if the target's behaviour changed:
 - Direct unit tests for target
 - Integration tests that use target
 - E2E tests that exercise target
-- Test coverage percentage if available
+
+No counts and no coverage percentage: what matters is which behaviour is held, by what.
 
 ## Process
 
@@ -24,7 +26,7 @@ Find all tests related to the target:
    - Unit tests (mock dependencies)
    - Integration tests (real dependencies)
    - E2E tests (full system)
-4. **Count coverage** - How many tests? What's covered?
+4. **Map behaviour to tests** - Which behaviour the callers rely on does each test hold?
 
 ## Search Patterns
 
@@ -43,37 +45,24 @@ Grep: it.*{functionality}
 ## Output Format
 
 ```markdown
-## Test Coverage: {target}
+## What holds the behaviour: {target}
 
-### Direct Tests
-- `src/services/__tests__/auth.test.ts`
-  - ✅ `validatePassword()` - 3 tests
-  - ✅ `createSession()` - 2 tests
-  - ❌ `refreshToken()` - NO TESTS
+### Held by an existing test
+- `validatePassword()` refuses a wrong password - `src/services/__tests__/auth.test.ts`
+- Full login flow, session persistence - `tests/integration/auth.test.ts`
+- Login through the UI - `tests/e2e/login.spec.ts`
 
-### Integration Tests
-- `tests/integration/auth.test.ts`
-  - ✅ Full login flow - 1 test
-  - ✅ Session persistence - 1 test
+### Held by nothing found
+- `refreshToken()` rotating the token: no test reaches it
 
-### E2E Tests
-- `tests/e2e/login.spec.ts` - covers auth flow
-
-### Coverage Summary
-| Function | Unit | Integration | E2E |
-|----------|------|-------------|-----|
-| validatePassword | ✅ 3 | ✅ 1 | ✅ |
-| createSession | ✅ 2 | ✅ 1 | ✅ |
-| refreshToken | ❌ 0 | ❌ 0 | ❌ |
-
-### Risk Assessment
-- **LOW RISK**: validatePassword, createSession (well tested)
-- **HIGH RISK**: refreshToken (no tests - add tests first!)
+### Tests of the structure being replaced
+- `auth.test.ts` "calls prisma.user.findUnique": asserts the old internals, goes with them
 ```
 
 ## Rules
 
 1. Check ALL test directories
-2. Count tests per function
-3. Flag untested code as HIGH RISK
+2. Report behaviour and the test that holds it, never a count
+3. Name behaviour nothing holds as a gap; whether it needs a test is the parent's call
+   (only if the refactor can really break it and that would hurt)
 4. Report quickly - other agents are waiting

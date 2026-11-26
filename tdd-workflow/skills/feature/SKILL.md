@@ -1,9 +1,9 @@
 ---
 name: feature
 description: >-
-  Start a TDD feature workflow. Default is a single-agent build: tests and
-  implementation together against the slice's acceptance criteria, then mutation
-  proof, then VERIFY. Pass --layers to fan out per-layer builders. Use when the user
+  Start a feature workflow. Default is a single-agent build against the slice's
+  acceptance criteria, proved by a run on the real surface; a test only when the brief
+  asks or the fault has a cheap local target; then VERIFY. Pass --layers to fan out per-layer builders. Use when the user
   wants to build a new feature, add functionality, or implement a vertical slice.
 argument-hint: <feature-name> [--layers]
 ---
@@ -15,8 +15,8 @@ argument-hint: <feature-name> [--layers]
 **Workspace:** Stay on the current branch — never `git checkout`, `git switch`, `git checkout -b`, `git stash`, or create branches. The user picks the workspace (worktree, feature branch, or main) at session start; the skill must respect that choice.
 
 1. **Read the slice doc** (`docs/slices/{NN}-{name}.md` or the equivalent) for scope
-   and acceptance criteria. The acceptance criteria are what the tests assert; without
-   them you are guessing at the contract.
+   and acceptance criteria. The acceptance criteria are the contract; without them
+   you are guessing at it.
 2. Create tasks for tracking — one per phase.
 3. **Read the real docs before building**, for every library, SDK, provider API or tool
    the slice touches:
@@ -42,19 +42,14 @@ argument-hint: <feature-name> [--layers]
 
 ## Build shape — single agent by default
 
-**Default: ONE agent (you) writes the tests and the implementation together**, working
-through the slice's acceptance criteria. Not a red-green ceremony per layer, and not a
-fan-out of per-layer builders.
+**Default: ONE agent (you) builds the slice**, working through its acceptance
+criteria. Not a red-green ceremony per layer, and not a fan-out of per-layer builders.
 
 This is a measured position, not a preference. A controlled study plus this user's own
 session data (**8-10× the token volume, 46 sub-agents in a session against 1**) found
 no quality gain from rigid red-green sequencing or from per-layer builder agents. What
-does earn its cost is: **tests as the contract**, **mutation proof**, and **VERIFY**.
-Those are kept, in full.
-
-So write the test and the code for a behaviour together, at whatever granularity the
-behaviour actually has. Keep the test honest — it asserts the acceptance criterion,
-not the implementation you just wrote.
+does earn its cost is **a run on the real surface** and **VERIFY**; a test is optional
+("The bar, and which tests", below).
 
 ### `--layers` — opt in when the slice genuinely spans independent surfaces
 
@@ -75,32 +70,32 @@ If the layers depend on each other — the usual case for a vertical slice — t
 costs a multiple of the tokens to produce a handoff you then have to reconcile. Build
 it yourself.
 
-## Mutation proof — required before VERIFY
+## The bar, and which tests
 
-Before entering VERIFY, prove the tests can fail for the right reason. One mutant at
-a time, against the one test file that must turn red; never a loop or driver that
-runs a suite per mutant.
+**The bar in your brief is the whole bar.** Add no test, check, pin, gate, proof or
+review round above it. With no bar stated: the change is no worse than its base and
+its own tests pass. Hold or block only for a failing run at this head or a fault a
+user would hit.
 
-1. Pick the line that implements the new behaviour.
-2. Revert it (do not commit).
-3. Re-run only the test file that claims to cover it, with the project's per-file
-   test command (Endoxia: `pnpm --filter <pkg> test <file>`) — it **must** go red,
-   and the failure must name the behaviour. A command that matches no test exits 0
-   and can never go red.
-4. Restore the line with `cp` from a snapshot you took first. **Never** restore with
-   `git checkout -- <file>` — that reverts to HEAD and destroys every uncommitted
-   change in the file, including work that was never part of the mutation.
-5. Re-run — green again.
+**A test is optional.** Write one only when the brief asks for it or the fault has an
+obvious, cheap, local test target, and then by the keep rule: a test stays only if it
+catches a failure that (1) can really happen, (2) hurts when it does, and (3) is not
+already caught elsewhere or cheaper elsewhere: another test, the model e2e runs,
+staging's roll and probe, the gate before production. Everything else is deleted, not
+moved or quarantined. Name the failure a test catches in its title. No new test is
+better than a bad test.
 
-A test that passes with and without the change is decoration. Record which line you
-mutated and which test went red; VERIFY and the PR both want it.
+**The default proof of a change is a run on the real surface**: the worktree's stack,
+the route, the command. File mtimes, self-reports, cached output and "it compiles"
+are not proof. A test you find that still passes when the behaviour it checks is
+broken is fixed or deleted.
 
 ## Phases
 
 | # | Phase  | What happens                                             | Details                                     |
 |---|--------|----------------------------------------------------------|---------------------------------------------|
 | 1 | SPEC   | Types, API contract, acceptance criteria from the slice  | [phases/01-spec.md](phases/01-spec.md)      |
-| 2 | BUILD  | Tests + implementation together (or `--layers` fan-out)  | [phases/02-build.md](phases/02-build.md)    |
+| 2 | BUILD  | The implementation, run on the real surface              | [phases/02-build.md](phases/02-build.md)    |
 | 3 | WIRE   | Connect layers, add routing                              | [phases/03-wire.md](phases/03-wire.md)      |
 | 4 | VERIFY | Independent review + runtime check, beside local checks  | [phases/04-verify.md](phases/04-verify.md)  |
 
@@ -110,11 +105,10 @@ When entering a phase, read its detail file.
 
 1. **Read the slice before building** — the acceptance criteria are the contract
 2. **Single-agent build by default**; `--layers` only for genuinely independent surfaces
-3. **Mutation proof before VERIFY** — non-negotiable
-4. **Track progress** — update tasks on phase entry and completion
-5. **No backward compatibility** — delete old code completely. No re-exports, no
+3. **Track progress** — update tasks on phase entry and completion
+4. **No backward compatibility** — delete old code completely. No re-exports, no
    `_deprecated` prefixes, no `// removed` comments, no shims
-6. **Never `sleep`-poll a long command** — run it with `run_in_background: true`;
+5. **Never `sleep`-poll a long command** — run it with `run_in_background: true`;
    its completion wakes you, so carry the workflow on from it in that turn. Never end the turn waiting on something with no local task (a GitHub run, a
    remote job): wrap that wait in a local background command that exits on its terminal
    state (the plugin context's "A background step is yours" rule)

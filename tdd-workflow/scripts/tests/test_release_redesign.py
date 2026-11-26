@@ -171,7 +171,7 @@ class DirectReleaseTest(unittest.TestCase):
 class ReleaseRedesignContractTest(unittest.TestCase):
     def test_version_and_no_retired_mechanisms(self):
         manifest = json.loads(read(os.path.join(ROOT, ".claude-plugin", "plugin.json")))
-        self.assertEqual(manifest["version"], "1.13.0")
+        self.assertEqual(manifest["version"], "1.14.0")
         for relative in ("skills/ship/SKILL.md", "skills/ship/generic.md", "skills/merge/SKILL.md", "skills/quickship/SKILL.md",
                          "skills/feature/phases/04-verify.md", "skills/refactor/phases/05-verify.md",
                          "skills/tdd-methodology/SKILL.md", "scripts/instance-manager.py",
@@ -204,8 +204,8 @@ class ReleaseRedesignContractTest(unittest.TestCase):
                       "the re-merge when main moved adopts too")
 
     def test_a_direct_landing_checks_the_merge_reusing_unchanged_passes_and_never_skips_it(self):
-        # Through the merge queue the queue proves the merge result (head-proof.md,
-        # test_head_proof.py); landing directly nothing else does.
+        # Through the merge queue the queue proves the merge result
+        # (pre-queue-check.md); landing directly nothing else does.
         step = skill("ship").split("**Local validation.**", 1)[1].split("Before every push", 1)[0]
         direct = " ".join(step.split("**Directly**", 1)[1].split())
         self.assertIn("byte-identical", direct)
@@ -230,9 +230,8 @@ class ReleaseRedesignContractTest(unittest.TestCase):
 
     def test_briefs_run_the_touched_test_files_not_the_suite(self):
         # Owner, 2026-10-21: keep checks small. Agents run the test files they touched,
-        # `ship:check` selects the rest, and a mutation proof runs one mutant against
-        # the one test file that must turn red. A repository-root `vitest run <file>`
-        # matched no test in Endoxia and exited 0.
+        # and the project's pre-queue check selects the rest. A repository-root
+        # `vitest run <file>` matched no test in Endoxia and exited 0.
         # The one exemption, and why: generic.md is the merge gate of a project that has
         # no selecting check (no `ship:check`). Nothing there selects what a change
         # reaches, so the gate runs the whole suite; it says so itself, and it is not
@@ -247,10 +246,6 @@ class ReleaseRedesignContractTest(unittest.TestCase):
                     if os.path.relpath(path, ROOT) in exempt:
                         continue
                     self.assertEqual(unreasoned_suite_runs(read(path)), [], path)
-        for relative in ("skills/feature/SKILL.md", "skills/feature/phases/02-build.md",
-                         "skills/refactor/SKILL.md", "skills/tdd-methodology/SKILL.md"):
-            prose = " ".join(read(os.path.join(ROOT, relative)).split()).lower()
-            self.assertIn("one mutant at a time, against the one test file that must turn red", prose, relative)
         for name in ("component", "service", "hook", "route", "schema"):
             self.assertIn("per-file test command", read(os.path.join(ROOT, "agents", f"{name}-builder.md")), name)
 

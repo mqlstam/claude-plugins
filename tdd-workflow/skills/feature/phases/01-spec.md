@@ -9,7 +9,8 @@ Delegate to the `spec-writer` agent with the feature name and in-scope layers.
 ## Steps
 1. Define shared types in `shared/types/`
 2. Define the API contract (request/response schemas, endpoints)
-3. Create task cards — one per builder, describing what to build and test
+3. Create task cards — one per builder, describing what to build and which failures
+   there would hurt
 
 ## Completion
 - Types defined and exported

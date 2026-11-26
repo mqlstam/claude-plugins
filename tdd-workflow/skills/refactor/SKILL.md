@@ -1,8 +1,9 @@
 ---
 name: refactor
 description: >-
-  Start a TDD refactoring workflow. Default is a single-agent build: characterization
-  tests and the migration together, then mutation proof, then VERIFY. Pass --layers to
+  Start a refactoring workflow. Default is a single-agent build: the migration, with a
+  characterization test only where no existing test and no type holds the behaviour
+  being moved, then VERIFY. Pass --layers to
   fan out per-layer test writers and module migrators. Use when the user wants to
   refactor, restructure, extract, or reorganize existing code.
 argument-hint: <target> [--layers]
@@ -32,13 +33,13 @@ argument-hint: <target> [--layers]
 
 ## Build shape — single agent by default
 
-**Default: ONE agent (you) writes the characterization tests and performs the migration**,
-module by module. Not a per-layer test-writer fan-out, and not a per-module migrator fan-out.
+**Default: ONE agent (you) performs the migration**, module by module, and writes a
+characterization test only where "The bar, and which tests" below asks for one. Not a per-layer test-writer fan-out, and not a per-module migrator fan-out.
 
 Measured position, not preference: a controlled study plus this user's own session data
 (**8-10× the token volume, 46 sub-agents in a session against 1**) found no quality gain
-from rigid red-green sequencing or per-layer builder agents. What earns its cost —
-tests as the contract, mutation proof and VERIFY — is kept in full.
+from rigid red-green sequencing or per-layer builder agents. What earns its cost is a
+run on the real surface, and VERIFY.
 
 The ANALYZE fan-out is different and stays: `dependency-mapper`, `caller-finder`,
 `test-scanner` and `impact-assessor` are **read-only searches over disjoint questions**,
@@ -53,20 +54,31 @@ files and can be migrated without reading each other's output. Then fan out
 and reconcile. If you end up merging their assumptions by hand, they were not
 independent — finish it yourself and say so.
 
-## Mutation proof — required before VERIFY
+## The bar, and which tests
 
-A refactor's tests must be able to fail. One mutant at a time, against the one test
-file that must turn red; never a loop or driver that runs a suite per mutant.
+**The bar in your brief is the whole bar.** Add no test, check, pin, gate, proof or
+review round above it. With no bar stated: the change is no worse than its base and
+its own tests pass. Hold or block only for a failing run at this head or a fault a
+user would hit.
 
-1. Snapshot the file: `cp <file> /tmp/<file>.bak`
-2. Revert the line that carries the refactored behaviour
-3. Re-run only the covering test file, with the project's per-file test command
-   (Endoxia: `pnpm --filter <pkg> test <file>`) — it MUST go red, naming the behaviour
-4. Restore from the snapshot. **Never** `git checkout -- <file>` — it reverts to HEAD
-   and destroys every uncommitted change in that file
-5. Re-run — green
+**A test is optional.** Write one only when the brief asks for it or the fault has an
+obvious, cheap, local test target, and then by the keep rule: a test stays only if it
+catches a failure that (1) can really happen, (2) hurts when it does, and (3) is not
+already caught elsewhere or cheaper elsewhere: another test, the model e2e runs,
+staging's roll and probe, the gate before production. Everything else is deleted, not
+moved or quarantined. Name the failure a test catches in its title. No new test is
+better than a bad test.
 
-Record the mutated line and the test that caught it.
+**The default proof of a change is a run on the real surface**: the worktree's stack,
+the route, the command. File mtimes, self-reports, cached output and "it compiles"
+are not proof. A test you find that still passes when the behaviour it checks is
+broken is fixed or deleted.
+
+For a refactor the faults are a caller that now sees other behaviour, a persisted
+format that moved, a path that no longer runs. ANALYZE's `test-scanner` says which an
+existing test already holds, and the type system holds the signatures. A
+characterization test is written only where neither holds the behaviour being moved:
+green on the old structure, unchanged after. A test of the old internals goes with them.
 
 ## Parallelism overview
 
@@ -76,7 +88,7 @@ Phase 1: ANALYZE ──┬── dependency-mapper ──┐
                    ├── test-scanner ───────┤
                    └── impact-assessor ────┘
 
-Phase 2: TEST  ─── single agent (--layers to fan out)
+Phase 2: TEST  ─── single agent; only the gaps (--layers to fan out)
 Phase 3: REFACTOR ─ sequential (dependencies)
 Phase 4: MIGRATE ── single agent (--layers to fan out)
 
@@ -88,7 +100,7 @@ Phase 5: VERIFY ─── the feature workflow's VERIFY, told what the refactor 
 | # | Phase    | Parallel?                    | Details                                       |
 |---|----------|------------------------------|-----------------------------------------------|
 | 1 | ANALYZE  | Always (4 read-only agents)  | [phases/01-analyze.md](phases/01-analyze.md)  |
-| 2 | TEST     | Only with `--layers`         | [phases/02-test.md](phases/02-test.md)        |
+| 2 | TEST     | Only with `--layers`; may be empty | [phases/02-test.md](phases/02-test.md)        |
 | 3 | REFACTOR | Never                        | [phases/03-refactor.md](phases/03-refactor.md)|
 | 4 | MIGRATE  | Only with `--layers`         | [phases/04-migrate.md](phases/04-migrate.md)  |
 | 5 | VERIFY   | Review + runtime check       | [phases/05-verify.md](phases/05-verify.md)    |
@@ -99,12 +111,11 @@ When entering a phase, read its detail file.
 
 1. **Single-agent build by default**; `--layers` only for genuinely independent modules
 2. **Fan out to FIND, not to WRITE** — ANALYZE is parallel because its questions are disjoint and read-only
-3. **Mutation proof before VERIFY** — non-negotiable
-4. **Track progress** — update tasks on phase entry and completion
-5. **No backward compatibility** — delete old code, old exports, old types. No
+3. **Track progress** — update tasks on phase entry and completion
+4. **No backward compatibility** — delete old code, old exports, old types. No
    re-exports, no `_deprecated` prefixes, no `// removed` comments, no shims. Update
    ALL callers in the MIGRATE phase instead
-6. **Never `sleep`-poll a long command** — run it with `run_in_background: true`;
+5. **Never `sleep`-poll a long command** — run it with `run_in_background: true`;
    its completion wakes you, so carry the workflow on from it in that turn. Never end the turn waiting on something with no local task (a GitHub run, a
    remote job): wrap that wait in a local background command that exits on its terminal
    state (the plugin context's "A background step is yours" rule)

@@ -54,12 +54,12 @@ PR: the queue proves the merge result before main moves.
    a hook changed: give them and the contracts they touch a targeted correctness
    review, and once it is READY run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`.
    Substantive feature changes re-arm VERIFY fully.
-   Read this checkout's `package.json` after merging, then let the head's one proof
-   decide (`${CLAUDE_PLUGIN_ROOT}/skills/ship/head-proof.md` section 3, with the
+   Read this checkout's `package.json` after merging, then let the pre-queue check
+   decide (`${CLAUDE_PLUGIN_ROOT}/skills/ship/pre-queue-check.md` section 3, with the
    landing path below). **Through the merge queue**, a clean or conflict-only
-   integration runs no new full proof: the queue proves the merge result. Landing
-   directly, run `pnpm ship:check` when declared, otherwise follow
-   `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`.
+   integration runs no new check: the queue proves the merge result. Landing
+   directly, run `pnpm precheck` when declared, else `pnpm ship:check` when declared,
+   otherwise follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/generic.md`.
    Only exit `0` passes; fix a failure or environment refusal before continuing.
    Use background execution and its completion notification for long commands;
    its completion wakes you, so carry the workflow on from it in that turn.
@@ -103,8 +103,9 @@ PR: the queue proves the merge result before main moves.
 
    **Merging does NOT deploy.** Deploy fires only on a `deploy-*` tag (or manual
    dispatch), never on a push to `main`. This brings work onto `main`; run
-   **`/deploy`** when you want it released (unlike `/ship`, a `/merge` approval
-   does not cover that staging deploy; `/approve merge deploy` covers both). Where
+   **`/deploy`** when you want it released before staging's next roll (staging
+   rolls main hourly when main moved, and before every promote; a `/merge` approval
+   does not cover a deploy, `/approve merge deploy` covers both). Where
    a project has a staging step (Endoxia, slice 603) that tag reaches STAGING, and
    production is a separate **`/promote`**.
 

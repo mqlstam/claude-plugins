@@ -1,8 +1,7 @@
 ---
 name: ship
-description: Land the pull request the owner reviewed - check it is exactly the reviewed work with that review's evidence, integrate main if GitHub needs it, squash-merge that PR head (through GitHub's merge queue where main requires one), then deploy the merge commit to staging and watch it to its verdict. Runs when the user types /ship, after /approve ship, when the owner approved the agent App's PR on GitHub, or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md); that one approval covers the merge and the staging deploy of what it merged. Opening the PR for review (phase 1) needs no approval and runs at the end of VERIFY.
+description: Land the pull request the owner reviewed - check it is exactly the reviewed work, integrate main if GitHub needs it, squash-merge that PR head (through GitHub's merge queue where main requires one). It ends when the PR is merged or queued: it deploys nothing and watches no release. Runs when the user types /ship, after /approve ship, when the owner approved the agent App's PR on GitHub, or under the owner's standing approval (`release-approval-gate.py --status` names it; docs/STANDING-APPROVAL.md). Opening the PR for review (phase 1) needs no approval and runs at the end of VERIFY.
 release-actions: merge
-release-follow-on: deploy-tag
 argument-hint: "[PR title]"
 allowed-tools: Bash(git *), Bash(gh *), Bash(npm run *), Bash(pnpm *), Bash(node *), Bash(jq *), Bash(date *), Bash(curl *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wait-mergeable.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent-github-token.py *), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_app.py *)
 ---
@@ -20,12 +19,12 @@ Stay on this branch; use a feature branch for /ship. Main uses /quickship.
 
 ## Two phases, one approval
 
-1. **Open for review**, `${CLAUDE_SKILL_DIR}/open-for-review.md`: commit, integrate
-   main, push the branch, open or update the PR with the runtime evidence, link it
-   to the thread, tell the owner what to watch. Nothing merges, so it needs no
+1. **Open for review**, `${CLAUDE_SKILL_DIR}/open-for-review.md`: commit, push the
+   branch, open or update the PR, link it to the thread, tell the owner.
+   Nothing merges, so it needs no
    approval: VERIFY runs it at READY, in every chat that builds something.
-2. **Land**, the steps below: the merge and the staging deploy. They need the
-   approval.
+2. **Land**, the steps below: the merge. It needs the approval, and the builder's
+   work ends there.
 
 **The approval** is one of: the typed `/ship`, `/approve ship` as a message of its
 own, or (where this machine has the agent App, `${CLAUDE_PLUGIN_ROOT}/docs/APP-SETUP.md`)
@@ -36,9 +35,8 @@ reads that review when the merge runs: the owner's newest deciding review is
 APPROVED on exactly the PR's head. As on GitHub, a comment after it keeps it; a later
 commit, a dismissal or a "changes requested" means no approval. Whichever it is, the approval is spent by the
 merge taking effect, never by invoking this skill or by a step or a merge that
-failed: retry in this session without asking again. It covers ONE merge and then
-ONE staging deploy tag on exactly the merge commit it produced (step 7). A second
-PR, a tag on any other commit, and production (`/promote`, `/release`, `/hotfix`)
+failed: retry in this session without asking again. It covers ONE merge. A second
+PR, a deploy tag (`/deploy`) and production (`/promote`, `/release`, `/hotfix`)
 each need their own approval.
 
 **Woken by T3 on the PR** (the chat watched it in phase 1): read the owner's review,
@@ -49,7 +47,7 @@ each need their own approval.
 - Changes requested, or comments with no approval on the head → read them
   (`gh pr view <PR> --comments`, and `gh api repos/:owner/:repo/pulls/<PR>/comments`
   for the line comments), fix in this chat, VERIFY the change as VERIFY step 4
-  says, then open for review again (it updates the PR and its evidence) and report.
+  says, then open for review again (it updates the PR) and report.
 - A failing check → read it (`gh pr checks <PR>`), fix what is this change's, report.
 Do not merge on a wake alone: the gate decides from the review, and so do you.
 
@@ -68,18 +66,16 @@ Do not merge on a wake alone: the gate decides from the review, and so do you.
    - **No open PR**, or uncommitted reviewed work, or `git rev-parse HEAD` is not
      `<SHA>`: the owner has not seen this. Open for review now
      (`${CLAUDE_SKILL_DIR}/open-for-review.md`). A change with nothing to observe
-     (its manifest says out of scope) then continues here. An observable one STOPS
-     after the report: the owner watches the evidence first. Their explicit go in
+     then continues here. An observable one STOPS after the report. Their explicit go in
      this chat (`/ship` again, or plainly saying to land it), or their approving
      review, lands it under this same approval, which is still unspent. A question
      or a change request is not a go: work it, and report again.
-   - **The head is the reviewed work, with that review's evidence:**
+   - **The head is the reviewed work:**
      `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py review-covers <PR>` must
      exit 0. Exit 1 says which: a commit came after the review (VERIFY it, as VERIFY
-     step 4 says), or the PR shows an earlier VERIFY's evidence. Either way say so
-     to the owner, open for review again so the PR shows the evidence of what
-     lands, and STOP: the owner watches it before it lands. Never land a head the
-     owner has not been shown.
+     step 4 says), or the PR carries an earlier verdict's marker. Either way say so
+     to the owner, open for review again so the PR carries the verdict of what
+     lands, and STOP. Never land a head no verdict covers.
 
 4. **Which landing path.** `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py mode`
    reads main's active rules on GitHub:
@@ -103,7 +99,7 @@ Do not merge on a wake alone: the gate decides from the review, and so do you.
    - `3` `DIRTY` / `BEHIND` → main must come in first: "Integrate main" below,
      then push the integration as open-for-review step 4 does and set `<SHA>` to
      it, run `review-covers <PR>` again, and wait again. A clean integration keeps
-     the verdict and its evidence. It is a new head, though, so an approval given
+     the verdict. It is a new head, though, so an approval given
      as a GitHub review no longer covers it: tell the owner the PR was brought up
      to date with main and needs their approval again (on GitHub, or `/ship`), and
      STOP. A typed approval covers it: go on.
@@ -137,53 +133,14 @@ Do not merge on a wake alone: the gate decides from the review, and so do you.
    through the API). A 422 "Reference does not exist" means the repository's
    "Automatically delete head branches" setting already removed it: done.
 
-7. **Deploy what you merged to staging, under this same approval, and watch it to
-   its verdict in this turn.** `<M>` is the merge commit from (6). First, whether
-   the project deploys at all:
-   `gh api repos/:owner/:repo/actions/workflows/deploy.yml --jq .state`. A 404 (no
-   such workflow) means there is no staging deploy here: say so in one line and go
-   on to "After it lands".
-
-   Otherwise read `${CLAUDE_PLUGIN_ROOT}/skills/deploy/SKILL.md` and carry out its
-   steps here, with `<SHA>` = `<M>`, not main's tip. Do not invoke `/deploy`
-   through the Skill tool: it would tag main's tip, and this approval covers
-   exactly one `deploy-*` tag on `<M>`; a tag on any other commit needs
-   `/approve deploy`. Create the tag on `<M>` before pushing it, then push it by
-   its literal name in a command of its own: the gate reads the tag's commit.
-
-   Before tagging, make sure staging does not already serve a commit that contains
-   `<M>` (a tag on `<M>` would roll it back, e.g. after another session's `/release`
-   of a newer main). Read what
-   staging SERVES: `gh api repos/:owner/:repo/environments/staging/variables/PUBLIC_URL --jq .value`
-   gives `<URL>`, and `curl --max-time 10 <URL>/api/health/live` answers JSON whose
-   `version` is the served commit `<SERVED>`. When either cannot be read, push NO
-   tag: no other source says what staging serves (the newest successful deploy
-   run may be a production-only `/hotfix`), and a tag on an older commit would
-   roll staging back. Report "staging deploy NOT RUN: staging's health route did
-   not answer" with `<URL>` (or that it could not be read) and `<M>`, and name
-   `/deploy` as the owner's follow-up. Otherwise
-   `git merge-base --is-ancestor <M> <SERVED>` (exit `128`: `git fetch --quiet origin <SERVED>`
-   first) exiting `0` means staging already serves `<M>`: report that and push
-   nothing.
-
-   **The turn does not end before the deploy run's verdict.** The deploy steps wait
-   for it in foreground slices (`release-run.py await`). A thread can settle at the
-   end of the turn its PR merged in (T3's settle-on-merge): on 2026-10-20 that
-   killed a background await, and a failed run went unseen for 9.5 h.
-   Production stays untouched until `/promote`.
-
-8. **Report, and let the owner see what needs them.**
-   - **Green** (staging verified, or no staging deploy here): one short message,
-     the PR, `<M>`, and the staging verdict. In T3 Code, then settle the thread
-     (`t3_thread_organize`, `settle`; it takes effect when the turn ends).
-   - **Red, NOT RUN or not concluded**: the message STARTS with that (what failed,
-     the run URL, `<M>`), then what the owner can do (`/deploy`,
-     the project's release status command such as `pnpm release:status`). In T3
-     Code, do not settle: `t3_thread_organize` with `pin`, then with `mark_unread`,
-     so the thread stays on top of the owner's list and unread. Where T3 settles a
-     thread when its PR merges whatever the thread says (its settle-on-merge
-     setting), the thread may still leave the list: say so in the message, and that
-     the release status names the open run.
+7. **Report, and end.** One short message: the PR and `<M>`, or that the PR is
+   queued. Deploy nothing and watch no release run: Staging rolls main on a fixed rhythm (hourly when main moved) and before every
+   promote, watched by one session;
+   `/deploy` releases main on demand and keeps its own watch. In T3 Code, settle
+   the thread (`t3_thread_organize`, `settle`; it takes effect when the turn ends)
+   once the PR is merged. A merge that failed is not a landing: the message STARTS
+   with what failed, and the thread is pinned and marked unread instead
+   (`t3_thread_organize` with `pin`, then with `mark_unread`).
 
 ## Land through the merge queue
 
@@ -214,14 +171,15 @@ b. **Enqueue:** `gh pr merge <PR> --squash --match-head-commit <SHA>`, the same
    `is already queued to merge`; anything else is a failed enqueue, and the output
    is the reason. `--match-head-commit` still binds it to the reviewed head.
 
-c. **Wait for the queue's verdict in the foreground**, in slices:
-   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py await <PR> --head <SHA> --slice-min 9`
-   with a Bash `timeout` of 600000. Its bound is derived from the queue: each group
-   ahead and this PR's own may run to the queue's check timeout once. Its last
-   line and exit:
+c. **The turn may end once the PR is queued.** Report it queued (7). The queue's
+   verdict comes from a background command (`run_in_background: true`), never a
+   foreground wait; its completion wakes you, so carry on from it in that turn:
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-queue.py await <PR> --head <SHA> --slice-min 9`.
+   Its bound is derived from the queue: each group ahead and this PR's own may run
+   to the queue's check timeout once. Its last line and exit:
    - `0` `merged=<M>` → the queue landed it; `<M>` is the commit on main. Read the
      verdict from the PR as step 6 says (`MERGED <M>`), delete the branch as step 6
-     says (usually already gone), then (7) with `<M>`.
+     says (usually already gone), and report (7).
    - `6` `merge_queue_still_queued … --until <E>` → run the same command again
      with `--until <E>`, until another exit.
    - `3` `removed` → the PR left the queue without merging. It names the failing
@@ -252,7 +210,7 @@ out and turns its auto-merge off; then push, and land again from (a).
 
 ## Integrate main
 
-Used by open for review (always) and by landing (directly: when GitHub reports
+Used by open for review (only when GitHub reports a conflict) and by landing (directly: when GitHub reports
 `DIRTY` or `BEHIND`; through the merge queue: `DIRTY` only). `git fetch origin main`, then
 `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py adopt-squash`, then
 `git merge --no-edit -m "chore: integrate origin/main before shipping" origin/main`.
@@ -270,29 +228,31 @@ merge is exactly git's clean merge of the reviewed work and main, and the verdic
 covers it without another review. Exit 1 names the paths a conflict resolution or
 a hook changed: give them and the contracts they touch a targeted correctness
 review, and once it is READY run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify-state.py record`.
-A new verdict means new evidence: record the runtime evidence for the resolved
-paths again (or name each flow NOT RUN with its reason) with the new `verdictId`, open
-for review again, and STOP for the owner; `review-covers` refuses the old manifest.
+A new verdict means a new marker: run the runtime criteria the resolved paths touch
+again (or name each flow NOT RUN with its reason), open for review again, and STOP
+for the owner; `review-covers` refuses the old marker.
 Substantive new feature work re-arms VERIFY fully.
 
-**Local validation.** The head's one proof decides it
-(`${CLAUDE_PLUGIN_ROOT}/skills/ship/head-proof.md` section 3). **Through the merge
+**Local validation.** The pre-queue check decides it
+(`${CLAUDE_PLUGIN_ROOT}/skills/ship/pre-queue-check.md` section 3). **Through the merge
 queue** (`merge-queue.py mode` exit `0`), a clean or conflict-only integration
-runs no new full proof: VERIFY's proof of the reviewed work stands, and the queue's
+runs no new check: VERIFY's check of the reviewed work stands, and the queue's
 required check proves the merge result before main moves. A resolution that wrote
 new code is a fix: VERIFY step 4. **Directly** (`merge_queue=none`), nothing else
-proves the merge result, so read the checkout's own `package.json` after the merge.
-When it declares `ship:check`, run `pnpm ship:check` once. It already ran in
-VERIFY; this second run reuses each pass whose input contents are byte-identical,
-so a no-op or docs-only merge re-runs only what the merge reaches. On that path never
-skip it, and never replace it with commands picked by hand. It selects affected
-lint/typecheck, scoped assertions and directly touched tests. The model may add
-`--add-tests`, `--add-package` or `--add-checks`, each with `--reason`, for a
-boundary the automatic selection cannot see; nothing narrows the floor.
+proves the merge result, so read the checkout's own `package.json` after the merge
+and run its check once on the merged tree. When it declares `precheck`, run
+`pnpm precheck`. Otherwise, when it declares `ship:check`, run `pnpm ship:check`. It
+already ran in VERIFY; this second run reuses each pass whose input contents are
+byte-identical, so a no-op or docs-only merge re-runs only what the merge reaches.
+On that path never skip it, and never replace it with commands picked by hand. It
+selects affected lint/typecheck, scoped assertions and directly touched tests. The
+model may add `--add-tests`, `--add-package` or `--add-checks`, each with
+`--reason`, for a boundary the automatic selection cannot see; nothing narrows the
+floor.
 Exit `0` passes, `1` fails, `2` refuses (fix the named environment issue, then
 retry). Any other nonzero exit or interrupted command is not a pass: report its
 output and resolve the cause. No automatic full-suite escalation.
-Without that script, follow `${CLAUDE_SKILL_DIR}/generic.md` (the repo's own
+Without either script, follow `${CLAUDE_SKILL_DIR}/generic.md` (the repo's own
 lint, typecheck, formatting, tests, build and assertions).
 Independent checks may run together. A call that can exceed about 8 minutes
 runs with `run_in_background: true`, never sleep-polled; its completion wakes you, so carry the workflow on from it in that turn.
@@ -342,12 +302,12 @@ merge result before main moves.
    Say this in one line.
 
    **In a T3 Code thread** (the session runs in `~/.t3/worktrees/...`, or
-   `CLAUDE_CODE_ENTRYPOINT` is `sdk-*`) there is no exit prompt: step 8 settles a
-   green thread and keeps a red one. Where the repo reads T3's state (Endoxia,
+   `CLAUDE_CODE_ENTRYPOINT` is `sdk-*`) there is no exit prompt: step 7 settles
+   the thread of a merged PR. Where the repo reads T3's state (Endoxia,
    slice 752) the session-start sweep then stops its stack and removes its
    checkout when it is clean and its work is on main. Say that instead.
 
-**Landing alone does not deploy.** A deploy fires only on a `deploy-*` tag (or a
-manual dispatch), never on a push to `main`. Step 7 pushes that tag for the merge
-commit, to STAGING where the project has one (Endoxia, slice 603), under this
-ship's approval; production is a separate `/promote`.
+**Landing does not deploy.** The builder ends at the merge. Staging rolls main on a fixed rhythm (hourly when main moved) and before every
+promote, watched by one session;
+`/deploy` releases main on demand (a `deploy-*` tag, to STAGING where the project
+has one), and production is a separate `/promote`.

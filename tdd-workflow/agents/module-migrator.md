@@ -68,7 +68,7 @@ const user = await authService.validateCredentials({ email, password });
 One run of those files, with the project's per-file test command (the project's
 own rule names it; Endoxia: `pnpm --filter <pkg> test <file>…`). Check that the
 output names them: from a workspace root, `vitest run <file>` can match no test
-and still exit 0. Never the package or repository suite: VERIFY's `ship:check`
+and still exit 0. Never the package or repository suite: VERIFY's pre-queue check
 selects what your changes reach.
 
 ## Output Format
@@ -105,7 +105,8 @@ selects what your changes reach.
 ## Rules
 
 1. **ONLY touch your assigned module** - Don't edit other modules
-2. **Run the test files you changed** - Verify nothing broke
+2. **Run the test files you changed** - Verify nothing broke; the brief's bar is the
+   whole bar, so add no test, check or proof above it
 3. **Document every change** - File, line, what changed
 4. **Report completion** - So other migrators can continue
 5. **Don't delete old code** - That's done after ALL modules migrate

@@ -13,7 +13,7 @@ You analyze existing code to prepare for safe refactoring.
 - [ ] **Find target code** - Locate all files related to the refactoring target
 - [ ] **Map dependencies** - What does this code depend on?
 - [ ] **Map callers** - What code calls/uses this?
-- [ ] **Find tests** - Existing test coverage?
+- [ ] **Find tests** - Which behaviour does an existing test already hold?
 - [ ] **Create plan** - Document refactoring steps
 
 ## Process
@@ -33,10 +33,9 @@ You analyze existing code to prepare for safe refactoring.
    - Find all import statements
    - Note every file that uses this code
 
-4. **Check test coverage**
-   - Find test files for target code
-   - Count number of tests
-   - Note what's covered vs not covered
+4. **Check what holds the behaviour**
+   - Find the tests that would turn red if the target's behaviour changed
+   - Note behaviour the callers rely on that no test and no type holds
 
 ## Output Format
 
@@ -60,22 +59,23 @@ You MUST output a structured analysis:
 - middleware/auth.ts:12 - request authentication
 
 ### Existing Tests
-- user.routes.test.ts - 3 tests cover auth logic
-- auth.test.ts - 15 tests (full coverage)
-- NO TESTS: admin.routes.ts auth logic
+- user.routes.test.ts - holds the login endpoint's refusals
+- auth.test.ts - holds password validation and session creation
+- Held by nothing: admin.routes.ts auth logic
 
 ### Refactoring Plan
 1. Create new auth.service.ts with methods: validateCredentials, createSession
-2. Write tests for new methods first (TDD)
+2. Characterization test for admin.routes.ts auth logic (nothing holds it, and a
+   break there lets a non-admin in); none for what the existing tests hold
 3. Implement new methods
 4. Update callers one by one, running tests after each
 5. Delete old inline code
 6. Remove unused imports
 
 ### Risk Assessment
-- LOW: Well-tested code, clear dependencies
-- MEDIUM: Some callers lack tests
-- HIGH: No existing tests (need to add tests first)
+- LOW: The moved behaviour is held by tests or types, clear dependencies
+- MEDIUM: Some behaviour callers rely on is held by nothing
+- HIGH: Behaviour whose break would hurt is held by nothing
 ```
 
 ## Rules
@@ -83,5 +83,6 @@ You MUST output a structured analysis:
 1. Be EXHAUSTIVE - find ALL related code
 2. Check ALL callers - grep for function names, imports
 3. Document EVERYTHING in the output format above
-4. If high risk (no tests), recommend adding tests before refactoring
+4. If high risk, recommend a characterization test for exactly that behaviour before
+   refactoring; never tests for what is already held
 5. Update task file with the plan when done

@@ -225,7 +225,9 @@ ONE OF SEVERAL ACTIONS. `release-actions: a, b` covers one effect of EACH
 EITHER (`push-main | merge` on /quickship, which pushes to main where the branch
 takes pushes and lands through a PR where it requires a merge queue, slice 989).
 
-SHIP COVERS ITS OWN STAGING DEPLOY (owner, 2026-10-20). A skill may declare
+A FOLLOW-ON. No shipped skill declares one since the builder ends at the merge
+(owner, 2026-11-25: /ship and /quickship no longer deploy; staging rolls main on a
+rhythm). The mechanism, as built for /ship on 2026-10-20: a skill may declare
 `release-follow-on: deploy-tag`: its approval then also covers ONE deploy-* tag on
 exactly the commit its own release produced, once that release took effect (the
 PR's merge commit for /ship, and for /quickship in a merge-queue repo; for a direct

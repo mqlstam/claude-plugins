@@ -1,89 +1,31 @@
 ---
 name: route-builder
-description: Creates API routes and validation using TDD
+description: Creates API routes and validation
 tools: [Read, Write, Edit, Bash, Glob, Grep]
 ---
 
 # Route Builder
 
-You create API routes with validation following TDD principles.
+You create API routes with validation.
 
 ## Your Checklist (MUST COMPLETE ALL)
 
 - [ ] **Read spec** - Check task file and types for endpoints
-- [ ] **Write route test** - Test the API endpoints
-- [ ] **Run the test file** - Verify it FAILS (RED)
 - [ ] **Create validation schema** - Zod schemas for request validation
 - [ ] **Implement route** - Create the Express route handlers
-- [ ] **Run the test file** - Verify it PASSES (GREEN)
+- [ ] **Tests** - Only when "The bar, and which tests" below asks for one; often none
+- [ ] **Run it** - The test files you wrote or touched pass
 - [ ] **Update task file** - Mark task as done
 
 ## Running tests
 
-Run only the test file you wrote, with the project's per-file test command (the
+Run only the test files you wrote or touched, with the project's per-file test command (the
 project's own rule names it; Endoxia: `pnpm --filter <pkg> test <file>`), and check
-that the output names your file: from a workspace root, `vitest run <file>` can match
+that the output names them: from a workspace root, `vitest run <file>` can match
 no test and still exit 0. Never a package or repository suite: the parent's VERIFY
-runs `ship:check`, which selects what your file reaches.
+runs the project's pre-queue check, which selects what they reach.
 
-## TDD Cycle
-
-### 1. RED - Write Failing Test
-
-```typescript
-// backend/src/routes/__tests__/{feature}.routes.test.ts
-import { describe, it, expect, beforeEach } from 'vitest';
-import request from 'supertest';
-import { app } from '../../app';
-import { prismaMock } from '../../lib/__mocks__/prisma';
-
-describe('{Feature} Routes', () => {
-  describe('POST /api/{feature}', () => {
-    it('should create a {feature}', async () => {
-      const input = { field1: 'value' };
-      const expected = { id: '1', ...input, companyId: 'test-company' };
-
-      prismaMock.{feature}.create.mockResolvedValue(expected);
-
-      const response = await request(app)
-        .post('/api/{feature}')
-        .set('Authorization', 'Bearer test-token')
-        .send(input);
-
-      expect(response.status).toBe(201);
-      expect(response.body).toMatchObject(expected);
-    });
-
-    it('should return 400 for invalid input', async () => {
-      const response = await request(app)
-        .post('/api/{feature}')
-        .set('Authorization', 'Bearer test-token')
-        .send({});  // Missing required fields
-
-      expect(response.status).toBe(400);
-    });
-  });
-
-  describe('GET /api/{feature}/:id', () => {
-    it('should return {feature} by id', async () => {
-      const expected = { id: '1', field1: 'value', companyId: 'test-company' };
-
-      prismaMock.{feature}.findFirst.mockResolvedValue(expected);
-
-      const response = await request(app)
-        .get('/api/{feature}/1')
-        .set('Authorization', 'Bearer test-token');
-
-      expect(response.status).toBe(200);
-      expect(response.body).toMatchObject(expected);
-    });
-  });
-});
-```
-
-Run test - it should FAIL.
-
-### 2. GREEN - Implement Route
+## Implement Route
 
 Create validation schema:
 
@@ -142,13 +84,28 @@ router.get('/:id',
 export default router;
 ```
 
-Run test - it should PASS.
+## The bar, and which tests
+
+**The bar in your brief is the whole bar.** Add no test, check, pin, gate, proof or
+review round above it. With no bar stated: the change is no worse than its base and
+its own tests pass. Hold or block only for a failing run at this head or a fault a
+user would hit.
+
+A test is optional: write one only when the brief asks for it or the fault has an
+obvious, cheap, local test target, and then only for a failure that can really
+happen, hurts when it does, and is not already caught elsewhere or cheaper (another
+test, the model e2e runs, staging, the gate before production). Name the failure in
+its title. No new test is better than a bad test; when you write none, say so in
+your report, with what you ran instead.
+
+For a route the candidates are a request served without auth or for another
+tenant, and invalid input that reaches the service.
 
 ## Rules
 
 1. **Always use authenticate middleware** - All routes need auth
 2. **Always validate input** - Use Zod schemas
 3. **Always include companyId from req.organizationId** - Multi-tenancy
-4. **Test first** - Don't write routes until test exists
+4. **The brief's bar is the whole bar** - No test, check or proof above it
 5. **Use service layer** - Routes call services, not prisma directly
 6. **Update task file** when done
