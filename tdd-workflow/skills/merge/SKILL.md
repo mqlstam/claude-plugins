@@ -101,13 +101,16 @@ PR: the queue proves the merge result before main moves.
    worktree at …` and exits 1 after a SUCCESSFUL merge, before it reaches the
    remote branch.
 
-   **Merging does NOT deploy.** Deploy fires only on a `deploy-*` tag (or manual
-   dispatch), never on a push to `main`. This brings work onto `main`; run
-   **`/deploy`** when you want it released before staging's next roll (staging
-   rolls main hourly when main moved, and before every promote; a `/merge` approval
-   does not cover a deploy, `/approve merge deploy` covers both). Where
-   a project has a staging step (Endoxia, slice 603) that tag reaches STAGING, and
-   production is a separate **`/promote`**.
+   **Merging does NOT deploy, and this skill ends at the merge.** A deploy starts
+   only on a dispatch of the deploy workflow, never on a push to `main` or of a
+   tag: never create or push a `deploy-*` tag (the staging release writes it
+   itself once staging verified the release, so a pushed one starts nothing and
+   falsely marks a commit as verified). This brings work onto `main`; staging
+   follows main within the hour, and the repository's own workflow does it (it
+   rolls main when main moved, and before every promote). **`/deploy`** is the
+   dispatch by hand for when staging must have it sooner (a `/merge` approval
+   does not cover a deploy, `/approve merge deploy` covers both). Production is a
+   separate **`/promote`**.
 
 4. **The verdict comes from the PR, never from the merge's exit code:**
    `gh pr view <PR> --json state,mergedAt,mergeCommit --jq '{state, mergedAt, sha: .mergeCommit.oid}'`.

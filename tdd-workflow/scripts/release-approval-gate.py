@@ -39,7 +39,11 @@ Two layers, one script:
                            git/refs (other than a literal feature branch) or git/tags
                dispatch    gh workflow run, gh run rerun; gh api write to
                            actions/workflows/W/dispatches, actions/runs/N/rerun
-               rerun       gh run rerun <id> --failed; gh api write to
+               dispatch-staging
+                           exactly `gh workflow run deploy.yml --ref main -f
+                           target=staging [-f accept_off=<names>]` (below, A
+                           STAGING DISPATCH)
+               rerun      gh run rerun <id> --failed; gh api write to
                            actions/runs/N/rerun-failed-jobs
 
              Recognised on what each top-level simple command RUNS (round-5
@@ -225,6 +229,36 @@ ONE OF SEVERAL ACTIONS. `release-actions: a, b` covers one effect of EACH
 EITHER (`push-main | merge` on /quickship, which pushes to main where the branch
 takes pushes and lands through a PR where it requires a merge queue, slice 989).
 
+A STAGING DISPATCH (2026-11-26). /deploy releases main to staging with a dispatch
+(`gh workflow run deploy.yml --ref main -f target=staging`), no longer with a
+`deploy-*` tag: where the staging release writes that tag itself as its "staging
+verified" marker (Endoxia #3342), a pushed one starts nothing and marks a commit
+staging never verified. So /deploy declares `release-actions: dispatch-staging`: a
+command is one only when it is, word for word, on an allowlist (review round 1: a
+bare `target=staging` test also covered any workflow, any ref and any other input,
+`accept_recreate`, `accept_drain` and `waive_cve` among them). All of:
+  * the workflow is exactly `deploy.yml` (no path, id or other casing);
+  * `--ref main`, as two words, once;
+  * `-f target=staging`, once;
+  * at most one `-f accept_off=<names>`, the names a comma list in the grammar
+    Endoxia's manifest reader holds a capability to (`[a-z][a-z0-9_]*`);
+  * nothing else: no other field, no repeated field, no -F / --field /
+    --raw-field / --json (a typed field can read a file or standard input), no
+    -R / --repo on gh or the subcommand, and no GH_REPO reaching gh.
+Anything else is a plain `dispatch`, as before the class existed. Its approval
+covers that one dispatch and no other: a dispatch to production or to both, a
+promote, a rerun the release did not start, all still need a skill that declares
+`dispatch`. An approval of `dispatch` covers a staging dispatch as it did before
+the class existed; where both are open the staging one is spent first.
+
+NO SHIPPED SKILL DECLARES deploy-tag since then. The class and its rules stay: a
+push of a `deploy-*` tag (or any tag or ref write above) in a guarded repository
+is refused unless an approval covers `deploy-tag`, and with no skill declaring it
+none does, the standing approval included. A tag that must be written by hand is
+the user's, in their own shell. A repository whose release still starts on a tag
+push declares that in a skill of its own (`release-actions: deploy-tag` in its
+`.claude/skills/<name>/SKILL.md`), and the rules below apply to it unchanged.
+
 A FOLLOW-ON. No shipped skill declares one since the builder ends at the merge
 (owner, 2026-11-25: /ship and /quickship no longer deploy; staging rolls main on a
 rhythm). The mechanism, as built for /ship on 2026-10-20: a skill may declare
@@ -241,9 +275,9 @@ release starts left out the staging deploy and 53 then needed a second typed
 deploy, median 96 min later.
 
 A release that took effect also earns ONE `gh run rerun <id> --failed` of the run
-it started, under the same approval: a deploy tag pushed by its literal name
-(GitHub is asked whether run <id> is that tag's push), or a dispatch whose own
-output printed the run's URL; the rerun must name that run's repository (its -R,
+it started, under the same approval: a dispatch whose own output printed the run's
+URL (/deploy's, since 2026-11-26), or a deploy tag pushed by its literal name
+(GitHub is asked whether run <id> is that tag's push); the rerun must name that run's repository (its -R,
 gh's -R, GH_REPO or cwd). Any other rerun is a dispatch.
 
 Why the approval is read from the TRANSCRIPT and not from a file: a file the
@@ -293,7 +327,15 @@ from shell_text import inert_regions, mask_inert, simple_commands  # noqa: E402
 import agent_app  # noqa: E402
 import push_refs  # noqa: E402
 
-ACTION_CLASSES = ("merge", "push-main", "deploy-tag", "dispatch")
+ACTION_CLASSES = ("merge", "push-main", "deploy-tag", "dispatch", "dispatch-staging")
+
+# A staging dispatch is covered by its own approval first, then by one of `dispatch`
+# (which covered it before the class existed). Every other action only by itself.
+STAGING_DISPATCH = "dispatch-staging"
+
+
+def _covered_by(action: str) -> tuple[str, ...]:
+    return (STAGING_DISPATCH, "dispatch") if action == STAGING_DISPATCH else (action,)
 
 PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))
@@ -927,7 +969,7 @@ def _stops_at_pipe(masked: str, start: int) -> bool:
 _PLAIN_WORD = re.compile(r"[A-Za-z0-9._/:@+=,-]+")
 _PLAIN_REDIRECT = re.compile(r"(?:>>?|2>|&>)[A-Za-z0-9._/:@+=,-]+|2>&1")
 _REDIRECT_OPERATORS = {">", ">>", "2>", "&>"}
-RELEASE_SHAPE_EXAMPLE = "`git push origin deploy-<TS>`"
+RELEASE_SHAPE_EXAMPLE = "`gh workflow run deploy.yml --ref main -f target=staging`"
 
 
 def release_shape_problem(cmd: str, starts: list[int]) -> str | None:
@@ -1059,6 +1101,46 @@ def _workflow_target(args: list[str]) -> tuple[str | None, str | None]:
             workflow = tok
         i += 1
     return workflow, slug
+
+
+# The one workflow, ref and inputs a staging dispatch may name (docstring, A STAGING
+# DISPATCH). The capability grammar is Endoxia's own: scripts/deploy/lib/
+# capability-naming.sh CN_CAPABILITY_NAME, `[a-z][a-z0-9_]*`, which its manifest
+# reader holds every declared name to, joined by commas without spaces (CN_OFFS;
+# scripts/ci/staging-rhythm.mjs CAPABILITY_LIST is the same pattern).
+STAGING_WORKFLOW = "deploy.yml"
+STAGING_REF = "main"
+CAPABILITY_LIST = re.compile(r"[a-z][a-z0-9_]*(?:,[a-z][a-z0-9_]*)*")
+
+
+def _staging_only_dispatch(args: list[str]) -> bool:
+    """True when `gh workflow run <args>` is exactly the staging deploy of main:
+    `deploy.yml`, `--ref main` once, `-f target=staging` once, at most one
+    `-f accept_off=<capability names>`, in any order, and no other word. An
+    allowlist: any other workflow, ref, flag, field or spelling is a plain dispatch."""
+    workflow: list[str] = []
+    refs: list[str] = []
+    fields: list[str] = []
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok in ("--ref", "-f"):
+            if i + 1 >= len(args):
+                return False
+            (refs if tok == "--ref" else fields).append(args[i + 1])
+            i += 2
+        elif tok.startswith("-"):
+            return False
+        else:
+            workflow.append(tok)
+            i += 1
+    if workflow != [STAGING_WORKFLOW] or refs != [STAGING_REF]:
+        return False
+    offs = [f for f in fields if f != "target=staging"]
+    if fields.count("target=staging") != 1 or len(offs) > 1:
+        return False
+    return not offs or (offs[0].startswith("accept_off=")
+                        and CAPABILITY_LIST.fullmatch(offs[0][len("accept_off="):]) is not None)
 
 
 # --------------------------------------------------------------------------
@@ -1872,7 +1954,10 @@ def classify(cmd: str, cwd: str, branch_of=_current_branch, scope: RepoScope = G
                 details["merges"].append({"ref": ref, "dir": where, "slug": repo, "auto": auto,
                                           "head": _match_head(view.args)})
         elif view.kind == "gh-workflow-run":
-            add("dispatch")
+            # A repository named any way but the checkout's own (-R, GH_REPO) is not
+            # the staging deploy this session's /deploy makes: a plain dispatch.
+            add(STAGING_DISPATCH if _staging_only_dispatch(view.args)
+                and not (slug or view.slug or repo_candidate) else "dispatch")
             if details is not None:
                 details["dispatches"].append({"workflow": ref, "run": None, "slug": repo, "dir": where})
         elif one:
@@ -2176,6 +2261,8 @@ class World:
         actions: set[str] = set()
         for name in self.standing:
             actions |= set(resolver.actions(name)) | set(resolver.follow_on(name))
+        if "dispatch" in actions:
+            actions.add(STAGING_DISPATCH)  # a dispatch approval covers a staging dispatch
         return actions | {"rerun"} if actions else actions
 
     @property
@@ -2590,7 +2677,7 @@ class Ledger:
         return None
 
     def covers(self, action: str, sha: str | None = None, repo: str | None = None) -> bool:
-        if any(a.left[action] > 0 for a in self.auths):
+        if any(a.left[key] > 0 for a in self.auths for key in _covered_by(action)):
             return True
         return self.follow_on_covering(action, sha, repo) is not None
 
@@ -2619,14 +2706,15 @@ class Ledger:
                                                               for p in a.produced):
                     a.follow_left[action] -= 1
                     return
-        candidates = [a for a in self.auths if a.left[action] > 0]
-        if candidates:
-            mine = [a for a in candidates if a.skill == self.active]
-            chosen = (mine or candidates)[0]
-            chosen.left[action] -= 1
-            if produced and chosen.follow_left:
-                chosen.produced.append(produced)
-            return
+        for key in _covered_by(action):
+            candidates = [a for a in self.auths if a.left[key] > 0]
+            if candidates:
+                mine = [a for a in candidates if a.skill == self.active]
+                chosen = (mine or candidates)[0]
+                chosen.left[key] -= 1
+                if produced and chosen.follow_left:
+                    chosen.produced.append(produced)
+                return
         # An effect on a commit the gate could not read, or no other approval left:
         # spend a follow-on too. Never fewer charges than effects.
         armed = self.armed(action)
@@ -2651,7 +2739,7 @@ class Ledger:
                     and not any(a.left["merge"] > 0 for a in self.auths)):
                 # No typed approval paid for it: the owner's review on GitHub did, when
                 # it approves the head that was merged. That approval then covers this
-                # one merge and the one staging tag on its merge commit, as /ship's does.
+                # one merge and whatever follow-on /ship declares (none since 2026-11-25).
                 review = self.world.review(str(r["ref"]), repo)
                 if review is not None and review.approved:
                     self.auths.append(Authorization(REVIEW_APPROVAL, ("merge",), self._follow_on_of("ship")))
@@ -2724,8 +2812,10 @@ class Ledger:
             repo = self.repo_of(dirs[0], None, remotes[0])
             self.charge("push-main", produced=Produced(pushed, _first_dir(dirs[0]), False, repo)
                         if pushed and repo else None)
-        if "dispatch" in classes and not (failed_alone and self._no_dispatch_run(details, at)):
-            self.charge("dispatch")
+        dispatched = [c for c in ("dispatch", STAGING_DISPATCH) if c in classes]
+        if dispatched and not (failed_alone and self._no_dispatch_run(details, at)):
+            for cls in dispatched:
+                self.charge(cls)
             if sole:
                 # The run's repository is the one its URL names; a bare path, the dispatch's.
                 own = (details.get("dispatches") or [{}])[0]
@@ -3061,9 +3151,9 @@ def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
                 + (f"any number of release actions ({what}): it pushes with {', '.join(bulk)}. "
                    if bulk else f"{details['effects']} release actions ({what}). ")
                 + f"One approval covers one release effect, so run exactly one "
-                f"release command per call: one merge, one push to main, one deploy tag pushed by its "
-                f"literal name (`git push origin deploy-<TS>`, never `--tags`), or one dispatch. "
-                f"Nothing was used.")
+                f"release command per call: one merge, one push to main, one dispatch, or (where a "
+                f"skill of the repository declares tag pushes) one tag pushed by its literal name, "
+                f"never `--tags`. Nothing was used.")
     world = world or World()
     if classes <= world.standing_actions(resolver):
         return None
@@ -3099,6 +3189,16 @@ def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
         if attempt == 0:
             sleep(TRANSCRIPT_LAG_RETRY_S)
     assert ledger is not None
+    if missing == ["deploy-tag"] and not ledger.armed("deploy-tag") and not any(
+            "deploy-tag" in resolver.actions(n) for n in SUGGESTION_ORDER):
+        return ("Blocked: this command pushes a tag or writes a ref (deploy-tag), and no release skill "
+                "here declares that action, so no approval covers it, the standing approval included. "
+                "No skill pushes a `deploy-*` tag: where the staging release writes that tag itself as "
+                "its \"staging verified\" marker, a pushed one starts nothing and marks a commit "
+                "staging never verified. To get main onto staging sooner than its own rhythm, use "
+                "`/deploy` (a dispatch of the deploy workflow with `target=staging`). A tag that must "
+                "be written by hand is the user's to write in their own shell. Say that you were "
+                "blocked; do not route around this.")
     notes = ""
     if "merge" in missing and review_note:
         notes += f" {review_note}"
@@ -3113,8 +3213,8 @@ def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
                      "command of its own."))
     if "rerun" in missing:
         notes += (" A `gh run rerun <id> --failed` is covered once, without a new approval, for "
-                  "a run that a release approved in this session started (the deploy tag it "
-                  "pushed by name, or the run URL its dispatch printed); this run is not one of "
+                  "a run that a release approved in this session started (the run URL its dispatch "
+                  "printed, or the run of a tag it pushed by name); this run is not one of "
                   "those, was already re-run once, or GitHub could not be asked.")
     return (f"Blocked: this command performs a release action ({', '.join(missing)}) that no open "
             f"approval in this session covers. An approval stays open until the release it covers "
@@ -3123,7 +3223,7 @@ def decide_bash(payload: dict, resolver: SkillResolver, read=build_ledger,
             f"authorises a release: ask them to send `{_line_to_type(missing, ledger, resolver)}` as a "
             f"message of its own (nothing else in it), or to run the skill itself. A request in "
             f"plain words, or an /approve line inside a longer message, is not an approval. A ref pushed through a variable "
-            f"is read as the current branch, so push a tag by its literal name.{notes} Say that you "
+            f"is read as the current branch, so name a pushed ref literally.{notes} Say that you "
             f"were blocked; do not route around this.")
 
 

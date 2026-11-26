@@ -768,7 +768,7 @@ class FrontmatterTest(unittest.TestCase):
         for skill, expected, follow_on in (("ship", ("merge",), ()),
                                            ("quickship", ("merge", "push-main"), ()),
                                            ("merge", ("merge",), ()),
-                                           ("deploy", ("deploy-tag",), ())):
+                                           ("deploy", ("dispatch-staging",), ())):
             path = os.path.join(root, "skills", skill, "SKILL.md")
             self.assertEqual(gate.read_release_actions(path), expected, skill)
             self.assertEqual(gate.read_release_follow_on(path), follow_on, skill)

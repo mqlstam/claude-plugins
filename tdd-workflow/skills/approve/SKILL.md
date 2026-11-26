@@ -29,21 +29,25 @@ another thread or session**; only the owner types it.
 What it allows:
 
 - For each named release skill, you may invoke it in this session through the
-  Skill tool, and its declared release action (merge, push to main, deploy tag or
-  workflow dispatch) is allowed once.
-- **The approval is spent only by its effect:** the PR is MERGED, the deploy tag
-  is on origin, the push landed on main, the workflow run was created. Invoking
+  Skill tool, and its declared release action (merge, push to main or workflow
+  dispatch) is allowed once. No skill pushes a tag: `deploy` is a dispatch to
+  staging, and its approval covers exactly `gh workflow run deploy.yml --ref
+  main -f target=staging`, with at most `-f accept_off=<capability names>`.
+- **The approval is spent only by its effect:** the PR is MERGED, the push
+  landed on main, the workflow run was created. Invoking
   the skill spends nothing, and neither does a command that was refused, or that
-  failed with proof it took no effect (the tag is not on origin, git reported the
+  failed with proof it took no effect (git reported the
   push rejected, GitHub shows no run): retry in this session without a new
   approval. A merge follows its PR: MERGED, or still in the merge queue or waiting
   on auto-merge, is spent; open with neither (it failed, or the queue removed it)
   or closed unmerged is not. A command still running, or one whose effect cannot
   be ruled out, counts as spent.
-- One release command per Bash call: a call that can merge twice, push two tags
-  or dispatch twice is refused before it runs.
-- **`ship`, `quickship` and `merge` cover the landing only:** none deploys; staging
-  rolls main on its own rhythm. `/approve ship deploy` covers a deploy as well. Production
+- One release command per Bash call: a call that can merge twice or dispatch
+  twice is refused before it runs.
+- **`ship`, `quickship` and `merge` cover the landing only:** none deploys and none
+  pushes a tag; staging follows main within the hour by the repository's own
+  workflow. `/approve ship deploy` also covers one staging dispatch, for when
+  staging must have it sooner. Production
   (`promote`, `release`, `hotfix`) always needs its own approval.
 - A release that ran may re-run the failed jobs of the run it started once,
   `gh run rerun <id> --failed`, without a new approval (a deploy whose run failed

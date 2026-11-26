@@ -36,7 +36,7 @@ APPROVED on exactly the PR's head. As on GitHub, a comment after it keeps it; a 
 commit, a dismissal or a "changes requested" means no approval. Whichever it is, the approval is spent by the
 merge taking effect, never by invoking this skill or by a step or a merge that
 failed: retry in this session without asking again. It covers ONE merge. A second
-PR, a deploy tag (`/deploy`) and production (`/promote`, `/release`, `/hotfix`)
+PR, a staging deploy (`/deploy`) and production (`/promote`, `/release`, `/hotfix`)
 each need their own approval.
 
 **Woken by T3 on the PR** (the chat watched it in phase 1): read the owner's review,
@@ -134,9 +134,13 @@ Do not merge on a wake alone: the gate decides from the review, and so do you.
    "Automatically delete head branches" setting already removed it: done.
 
 7. **Report, and end.** One short message: the PR and `<M>`, or that the PR is
-   queued. Deploy nothing and watch no release run: Staging rolls main on a fixed rhythm (hourly when main moved) and before every
-   promote, watched by one session;
-   `/deploy` releases main on demand and keeps its own watch. In T3 Code, settle
+   queued. Deploy nothing, push no tag and watch no release run: staging follows
+   main within the hour, and the repository's own workflow does it (it rolls
+   main when main moved, and before every promote, watched by one session).
+   **Never create or push a `deploy-*` tag:** the staging release writes it
+   itself once staging verified the release, so a pushed one starts nothing and
+   falsely marks `<M>` as verified. `/deploy` gets main onto staging sooner (a
+   dispatch) and keeps its own watch. In T3 Code, settle
    the thread (`t3_thread_organize`, `settle`; it takes effect when the turn ends)
    once the PR is merged. A merge that failed is not a landing: the message STARTS
    with what failed, and the thread is pinned and marked unread instead
@@ -307,7 +311,9 @@ merge result before main moves.
    slice 752) the session-start sweep then stops its stack and removes its
    checkout when it is clean and its work is on main. Say that instead.
 
-**Landing does not deploy.** The builder ends at the merge. Staging rolls main on a fixed rhythm (hourly when main moved) and before every
-promote, watched by one session;
-`/deploy` releases main on demand (a `deploy-*` tag, to STAGING where the project
-has one), and production is a separate `/promote`.
+**Landing does not deploy, and this skill starts no deploy.** The builder ends at
+the merge. A deploy starts only on a dispatch of the deploy workflow, never on a
+push to `main` or of a tag. Staging follows main within the hour (the
+repository's own workflow dispatches it when main moved, and before every
+promote, watched by one session); `/deploy` is the dispatch by hand for when
+staging must have main sooner, and production is a separate `/promote`.

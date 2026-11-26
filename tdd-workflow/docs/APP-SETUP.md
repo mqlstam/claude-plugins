@@ -36,8 +36,9 @@ Facts below were read from docs.github.com on 2026-10-22; each step names its pa
      `.github/workflows/`: GitHub refuses a push that touches them without it. It
      has no read-only level. Leave it off otherwise, and such a push then fails out
      loud.
-   Not needed, because these run with your own `gh`, not the App's token: the merge,
-   the `deploy-*` tag push and branch deletion (Contents write would allow them;
+   Not needed, because these run with your own `gh`, not the App's token: the merge
+   and branch deletion (Contents write would allow them, and a tag push, which no
+   skill makes;
    the wrapper refuses them, and the release gate refuses a release through it),
    `gh run view` / `gh run list` (Actions), check runs and their annotations
    (Checks), commit statuses such as `endoxia/main-health`, environment variables
@@ -129,17 +130,18 @@ token expires; it never prints the key or the token. Then reload the plugin
   use a GitHub App installation access token ... instead of GITHUB_TOKEN";
   actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow). The
   App's branch pushes and PRs start their checks as yours did, without the approval
-  prompt for `pull_request` runs. `deploy-*` tags are pushed with your own
-  identity, as before, and start Deploy as before; pushed with an installation
-  token they would trigger it too (the docs do not name tag pushes separately; they
-  are push events).
+  prompt for `pull_request` runs. Nobody pushes a `deploy-*` tag: Deploy starts
+  on a dispatch (`/deploy`, with your own identity, or the repository's own
+  schedule), and the staging release writes the tag itself, with its
+  `GITHUB_TOKEN`, as the marker of a release staging verified. The wrapper
+  refuses a `deploy-*` push as the App, and the release gate refuses one from an
+  agent.
 - **The approval.** When `/ship` merges, the release gate reads
   `GET /repos/{o}/{r}/pulls/{n}` and `/pulls/{n}/reviews`: the PR's author must be
   `botLogin`, and `ownerLogin`'s newest submitted review must be `APPROVED` with
   `commit_id` equal to the head the merge names (`--match-head-commit`). As on
   GitHub, a comment after the approval keeps it; a dismissal, a later "changes
-  requested" or a newer commit means no approval. It covers that one merge and the one staging tag on its
-  merge commit, and is spent by the merge taking effect. Deploy, promote, release
+  requested" or a newer commit means no approval. It covers that one merge, and is spent by the merge taking effect. Deploy, promote, release
   and hotfix are never approved by a review.
 
 ## Follow-up: take your own gh login out of the agents' reach
@@ -150,5 +152,5 @@ is the approval. That is a text guard against an agent's mistake, like the rest 
 the gate, not a wall: the agents run with your own `gh` login, which can review.
 The hard version is an agent that holds no identity but the App's (which GitHub
 never lets approve its own PR): your `gh` login kept out of the agents' sessions,
-with merges and tags moved to an identity that cannot review for
+with merges and dispatches moved to an identity that cannot review for
 you. Not done in 1.9.0.
