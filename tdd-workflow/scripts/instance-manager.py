@@ -57,7 +57,7 @@ def main():
                 "  /ship              - Land the reviewed PR head (squash-merge or queue); ends there, no deploy\n"
                 "  /quickship         - Same local checks, push directly to main\n"
                 "  /merge             - Squash-merge a PR directly into main\n"
-                "  /deploy            - Release main: join the deploy run building it, else tag (Endoxia: STAGING)\n"
+                "  /deploy            - Main to STAGING sooner: join the deploy run building it, else dispatch (no tag)\n"
                 "  /promote           - Release what staging serves to production, after the full suite (Endoxia)\n"
                 "  /spinup            - Bring up this worktree's private runnable stack\n"
                 "  /teardown          - Tear down this worktree's stack (surgical)\n"

@@ -79,7 +79,8 @@ class ReleaseSkillsTest(unittest.TestCase):
         self.assertIn("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release-run.py await <id> --deadline-min 268 "
                       "--slice-min 9", cmds)
         self.assertIn("gh run view <id> --json status,conclusion,headSha", cmds)
-        self.assertIn("git push origin deploy-<TS>", cmds)
+        self.assertIn("gh workflow run deploy.yml --ref main -f target=staging", cmds)
+        self.assertFalse([c for c in cmds if c.startswith(("git tag", "git push"))], "no tag is made or pushed")
         self.assertNotIn("end your turn", text)
         self.assertIn("T3 Code", text)
         self.assertIn("reason=billing", text)
@@ -112,8 +113,9 @@ class LocalValidationSkillsTest(unittest.TestCase):
         self.assertTrue([c for c in cmds if c.startswith("gh run list --workflow deploy.yml")
                          and 'select(.status != "completed")' in c])
         self.assertIn("git merge-base --is-ancestor <SHA> <RUN_SHA>", cmds)
-        self.assertLess(text.index("git merge-base --is-ancestor"), text.index("git push origin deploy-<TS>"),
-                        "the train is asked before a tag is pushed")
+        self.assertLess(text.index("git merge-base --is-ancestor"),
+                        text.index("gh workflow run deploy.yml --ref main -f target=staging"),
+                        "the train is asked before a run is dispatched")
         self.assertNotIn("ci.yml", text, "the disabled CI workflow is not consulted")
 
     def test_invariant_runner_is_gone(self):

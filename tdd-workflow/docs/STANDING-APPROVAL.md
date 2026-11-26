@@ -2,8 +2,9 @@
 
 Owner, 2026-10-28: "geen stop, full send". One file on the machine turns the
 per-release approval off for the release skills it names. While it exists, Claude
-invokes those skills and runs their release commands (merge, push to main, deploy
-tag, workflow dispatch, a re-run of a failed run) without a typed `/approve`, and
+invokes those skills and runs their release commands (merge, push to main,
+workflow dispatch, a re-run of a failed run; never a tag push, which no skill
+declares) without a typed `/approve`, and
 VERIFY lands its PR with `/ship` right after opening it.
 
     ~/.config/claude-tdd-workflow/release-approval.json   (or $CLAUDE_TDD_RELEASE_APPROVAL_CONFIG)

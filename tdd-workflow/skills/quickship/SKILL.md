@@ -19,7 +19,7 @@ allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(node *),
 `/approve quickship`) is spent by the landing taking effect, never by invoking
 this skill, by a push that was rejected or by a PR the merge queue removed: retry
 in this session without asking again. It covers ONE landing, a push to `main` OR
-one merge of its own PR through the merge queue. A deploy tag (`/deploy`) and
+one merge of its own PR through the merge queue. A staging deploy (`/deploy`) and
 production (`/promote`, `/release`, `/hotfix`) need their own approval.
 
 1. **Only main, in the primary checkout.** Otherwise STOP and use /ship from the
@@ -92,8 +92,12 @@ production (`/promote`, `/release`, `/hotfix`) need their own approval.
      main keeps the commits the queue squashed; the next integration merges
      origin/main in without changing a file for them. Never reset or rewrite it.
 8. **Report, and end.** The landed commit `<P>`, or that the PR is queued. Deploy
-   nothing and watch no release run: Staging rolls main on a fixed rhythm (hourly when main moved) and before every
-   promote, watched by one session; `/deploy` releases main on demand.
+   nothing, push no tag and watch no release run: staging follows main within the
+   hour, and the repository's own workflow does it (it rolls main when main
+   moved, and before every promote, watched by one session). **Never create or
+   push a `deploy-*` tag:** the staging release writes it itself once staging
+   verified the release, so a pushed one starts nothing and falsely marks `<P>`
+   as verified. `/deploy` gets main onto staging sooner (a dispatch).
 
 ## After the push
 
